@@ -45,9 +45,6 @@ services:
       - OPENAI_API_BASE_URL=http://vllm:8000/v1
       - OPENAI_API_KEY=none
       - ANONYMIZED_TELEMETRY=false
-      - ENV=dev
-    #depends_on:
-    #  - vllm
 
 volumes:
   vllm_data:
