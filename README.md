@@ -1,4 +1,4 @@
-# Akamai inference Cloud - AI Quickstart Simple Chat
+# Akamai inference Cloud - AI Quickstart LLM
 
 Automated deployment script for running a AI inference stack on Akamai Cloud (Linode) GPU instances. Get vLLM and Open-WebUI up and running in minutes with a single command.
 
@@ -7,8 +7,8 @@ Automated deployment script for running a AI inference stack on Akamai Cloud (Li
 
 ```bash
 # Clone the repository
-git clone https://github.com/linode/ai-quickstart-simplechat
-cd ai-quickstart-simplechat
+git clone https://github.com/linode/ai-quickstart-llm
+cd ai-quickstart-llm
 
 # Run the deployment script
 ./start.sh
@@ -55,13 +55,13 @@ The script will guide you through:
 ### Configuration files in GPU Instance
 ```
    # Install script called by cloud-init service
-   /opt/ai-quickstart-simplechat/install.sh
+   /opt/ai-quickstart-llm/install.sh
 
    # docker compose file calle by systemctl at startup
-   /opt/ai-quickstart-simplechat/docker-compose.yml
+   /opt/ai-quickstart-llm/docker-compose.yml
 
    # service definition
-   /etc/systemd/system/ai-quickstart-simplechat.service
+   /etc/systemd/system/ai-quickstart-llm.service
 ```
 
 -----------------------------------------
@@ -117,7 +117,7 @@ Once complete, you'll see:
 ## 📁 Project Structure
 
 ```
-ai-quickstart-simplechat/
+ai-quickstart-llm/
 ├── start.sh                     # Main deployment script
 ├── script/
 │   ├── check_linodecli_token.sh # Token extraction from linode-cli
@@ -156,10 +156,10 @@ ssh root@<instance-ip>
 docker ps
 
 # Check Docker containers log
-cd /opt/ai-quickstart-simplechat && docker compose logs
+cd /opt/ai-quickstart-llm && docker compose logs
 
 # Check systemd service
-journalctl -u ai-quickstart-simplechat.service -n 10000 | awk '!seen[$0]++'
+journalctl -u ai-quickstart-llm.service -n 10000 | awk '!seen[$0]++'
 
 # Check cloud-init logs
 tail -f /var/log/cloud-init-output.log -n 1000
@@ -169,10 +169,10 @@ tail -f /var/log/cloud-init-output.log -n 1000
 ### Restart Services
 ```bash
 # Restart all services
-systemctl restart ai-quickstart-simplechat.service
+systemctl restart ai-quickstart-llm.service
 
 # Or using Docker Compose
-cd /opt/ai-quickstart-simplechat
+cd /opt/ai-quickstart-llm
 docker compose restart
 ```
 
@@ -205,10 +205,10 @@ nvidia-smi
 docker ps -a
 
 # Check systemd service
-systemctl status ai-quickstart-simplechat.service
+systemctl status ai-quickstart-llm.service
 
 # View detailed logs
-journalctl -u ai-quickstart-simplechat.service -xe
+journalctl -u ai-quickstart-llm.service -xe
 ```
 
 ### vLLM Model Not Loading
