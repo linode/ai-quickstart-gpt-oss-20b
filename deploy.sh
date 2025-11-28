@@ -88,7 +88,7 @@ echo "  • Deploy a fully configured GPU instance in your account with:"
 echo "    - Docker and Docker Compose"
 echo "    - NVIDIA drivers and Container Toolkit"
 echo "    - vLLM (LLM inference server)"
-echo "    - Pre-loaded model: unsloth/gpt-oss-20b"
+echo "    - Pre-loaded model: openai/gpt-oss-20b"
 echo "    - Open-WebUI (web interface)"
 echo ""
 print_msg "$GREEN" "Setup time: ~10-15 minutes"
@@ -457,7 +457,7 @@ while true; do
     ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
     progress "$YELLOW" "Status:downloading model ... Elapsed: ${ELAPSED_STR}"
 
-    if ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" "curl -s http://localhost:8000/v1/models 2>/dev/null" | grep -q '"id":"unsloth/gpt-oss-20b"'; then
+    if ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" "curl -s http://localhost:8000/v1/models 2>/dev/null" | grep -q '"id":"openai/gpt-oss-20b"'; then
         log_to_file "INFO" "vLLM model loaded successfully in ${ELAPSED_STR}"
         progress "$NC" "vLLM model is loaded (took ${ELAPSED_STR})"
         break

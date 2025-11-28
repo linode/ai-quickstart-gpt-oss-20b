@@ -47,7 +47,7 @@
   <text x="280" y="308" text-anchor="middle" class="small-label">🚀 High-Performance Inference Engine</text>
   <line x1="145" y1="318" x2="415" y2="318" stroke="#ff9800" stroke-width="1.5"/>
   <text x="280" y="338" text-anchor="middle" class="small-label">Port: 8000 (Internal Only)</text>
-  <text x="280" y="358" text-anchor="middle" class="small-label">Model: unsloth/gpt-oss-20b</text>
+  <text x="280" y="358" text-anchor="middle" class="small-label">Model: openai/gpt-oss-20b</text>
   <text x="280" y="378" text-anchor="middle" class="small-label">🔥 GPU-Accelerated</text>
   <text x="280" y="398" text-anchor="middle" class="small-label">OpenAI-Compatible API</text>
   <text x="280" y="418" text-anchor="middle" class="tiny-label">/v1/completions, /v1/chat/completions</text>
