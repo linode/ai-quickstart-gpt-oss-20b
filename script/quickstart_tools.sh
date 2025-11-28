@@ -1125,23 +1125,14 @@ get_gpu_availability() {
         fi
     done
 
-    # Combine availability pages
-    local availability
-    availability=$(jq -n -c '{data: [inputs.data[]] | unique}' "${temp_dir}/avail_page_"{1,2,3,4}".json") || {
+    # Combine availability pages into temp file (avoids "Argument list too long" on Git Bash/Windows)
+    jq -n -c '{data: [inputs.data[]] | unique}' "${temp_dir}/avail_page_"{1,2,3,4}".json" > "${temp_dir}/availability.json" || {
         echo -e "${RED}❌ Failed to process availability data${NC}" >&2
         return 1
     }
 
-    local types regions_data
-    types=$(cat "${temp_dir}/types.json")
-    regions_data=$(cat "${temp_dir}/regions.json")
-
-    # Clean up
-    rm -f "${temp_dir}/avail_page_"{1,2,3,4}".json" "${temp_dir}/types.json" "${temp_dir}/regions.json"
-
-    # Extract RTX4000 types
-    local rtx4000_types
-    rtx4000_types=$(echo "$types" | jq -c '
+    # Extract RTX4000 types to temp file
+    jq -c '
         [.data[] | select(.id | startswith("g2-gpu-rtx4000")) |
         {
             id: .id,
@@ -1159,33 +1150,40 @@ get_gpu_availability() {
                        elif (.id | endswith("-hs")) then 5
                        else 9 end)
         }] | sort_by(.sort_gpu, .sort_size)
-    ')
+    ' "${temp_dir}/types.json" > "${temp_dir}/rtx4000_types.json"
+
+    local rtx4000_types
+    rtx4000_types=$(cat "${temp_dir}/rtx4000_types.json")
 
     if [ "$rtx4000_types" = "[]" ]; then
+        rm -f "${temp_dir}/avail_page_"{1,2,3,4}".json" "${temp_dir}/types.json" "${temp_dir}/regions.json" "${temp_dir}/availability.json" "${temp_dir}/rtx4000_types.json"
         echo -e "${RED}❌ No RTX4000 instances found${NC}" >&2
         return 1
     fi
 
-    # Output JSON
+    # Output JSON using --slurpfile to read from files (avoids "Argument list too long" on Git Bash/Windows)
     jq -n -c \
-        --argjson availability "$availability" \
-        --argjson regions "$regions_data" \
-        --argjson types "$rtx4000_types" \
+        --slurpfile availability "${temp_dir}/availability.json" \
+        --slurpfile regions "${temp_dir}/regions.json" \
+        --slurpfile types "${temp_dir}/rtx4000_types.json" \
         '{
-            instance_types: ($types | map(del(.sort_gpu, .sort_size))),
-            regions: ($regions.data | sort_by(.id) | map(
+            instance_types: ($types[0] | map(del(.sort_gpu, .sort_size))),
+            regions: ($regions[0].data | sort_by(.id) | map(
                 . as $region |
                 {
                     id: $region.id,
                     label: $region.label,
                     instance_types: [
-                        $availability.data[] |
+                        $availability[0].data[] |
                         select(.region == $region.id and .plan != null and (.plan | startswith("g2-gpu-rtx4000")) and .available == true) |
                         .plan
                     ] | unique | sort
                 }
             ) | map(select(.instance_types | length > 0)))
         }'
+
+    # Clean up temp files
+    rm -f "${temp_dir}/avail_page_"{1,2,3,4}".json" "${temp_dir}/types.json" "${temp_dir}/regions.json" "${temp_dir}/availability.json" "${temp_dir}/rtx4000_types.json"
 }
 
 # Get available regions from GPU data
