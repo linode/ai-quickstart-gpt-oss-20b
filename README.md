@@ -68,7 +68,7 @@ That's it! The script will download required files and guide you through the int
 -----------------------------------------
 ## 🚦 Getting Started
 
-### Option A: Remote Execution (Recommended)
+### Option A: Single Command Execution
 
 No installation required - just run:
 
@@ -76,16 +76,22 @@ No installation required - just run:
 bash <(curl -fsSL https://raw.githubusercontent.com/linode/ai-quickstart-llm/main/deploy.sh)
 ```
 
-### Option B: Clone Repository
+### Option B: Download and Run
+
+Download the script and run locally:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/linode/ai-quickstart-llm/main/deploy.sh
+bash deploy.sh
+```
+
+### Option C: Clone Repository
 
 If you prefer to inspect or customize the scripts:
 
 ```bash
-# Clone the repository
 git clone https://github.com/linode/ai-quickstart-llm
 cd ai-quickstart-llm
-
-# Run the deployment script
 ./deploy.sh
 ```
 
@@ -118,6 +124,22 @@ Once complete, you'll see:
    SSH:         ssh root@<instance-ip>
    SSH Key:     /path/to/your/key
 ```
+
+-----------------------------------------
+
+## 🗑️ Delete Instance
+
+To delete a deployed instance:
+
+```bash
+# Remote execution
+bash <(curl -fsSL https://raw.githubusercontent.com/linode/ai-quickstart-llm/main/delete.sh) <instance_id>
+
+# Or if you cloned the repo
+./delete.sh <instance_id>
+```
+
+The script will show instance details and ask for confirmation before deletion.
 
 -----------------------------------------
 

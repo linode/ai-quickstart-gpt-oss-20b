@@ -6,16 +6,67 @@ set -euo pipefail
 # Delete Linode Instance
 #
 # Usage:
-#   ./delete.sh <instance_id>
-#   ./delete.sh -h
+#   ./delete.sh <instance_id>                    # Run locally (from cloned repo)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/linode/ai-quickstart-llm/main/delete.sh) <instance_id>
 #
 #==============================================================================
 
-# Get directory of this script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get directory of this script (empty if running via curl pipe)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}" 2>/dev/null)" 2>/dev/null && pwd 2>/dev/null || echo "")"
+
+# Remote repository base URL (for downloading files when running remotely)
+REPO_RAW_BASE="https://raw.githubusercontent.com/linode/ai-quickstart-llm/main"
+
+# Temp directory for remote execution (will be cleaned up on exit)
+REMOTE_TEMP_DIR=""
+
+#==============================================================================
+# Setup: Ensure required files exist (download if running remotely)
+#==============================================================================
+_setup_required_files() {
+    local files=("script/quickstart_tools.sh")
+    local all_exist=true
+
+    # Check if all required files exist locally
+    [ -z "$SCRIPT_DIR" ] && all_exist=false
+    for f in "${files[@]}"; do [ ! -f "${SCRIPT_DIR}/$f" ] && all_exist=false; done
+
+    if [ "$all_exist" = true ]; then
+        QUICKSTART_TOOLS_PATH="${SCRIPT_DIR}/script/quickstart_tools.sh"
+    else
+        # Download required files to temp directory
+        echo "Downloading required files..."
+        REMOTE_TEMP_DIR="${TMPDIR:-/tmp}/ai-quickstart-llm-$$"
+        mkdir -p "${REMOTE_TEMP_DIR}/script"
+
+        for f in "${files[@]}"; do
+            curl -fsSL "${REPO_RAW_BASE}/$f" -o "${REMOTE_TEMP_DIR}/$f" || { echo "ERROR: Failed to download $f" >&2; exit 1; }
+        done
+
+        SCRIPT_DIR="$REMOTE_TEMP_DIR"
+        QUICKSTART_TOOLS_PATH="${REMOTE_TEMP_DIR}/script/quickstart_tools.sh"
+    fi
+
+    export QUICKSTART_TOOLS_PATH
+}
+
+# Cleanup function for temp files
+_cleanup_temp_files() {
+    if [ -n "${REMOTE_TEMP_DIR:-}" ] && [ -d "$REMOTE_TEMP_DIR" ]; then
+        rm -rf "$REMOTE_TEMP_DIR"
+    fi
+}
+
+# Register cleanup on exit
+trap _cleanup_temp_files EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Setup required files (download if needed)
+_setup_required_files
 
 # Source quickstart tools library
-source "${SCRIPT_DIR}/script/quickstart_tools.sh"
+source "$QUICKSTART_TOOLS_PATH"
 
 # Show usage (for -h flag)
 show_usage() {
@@ -104,7 +155,7 @@ echo "  IP: $INSTANCE_IP"
 echo ""
 
 # Confirm deletion
-read -p "$(echo -e ${YELLOW}Are you sure you want to delete this instance? [y/N]:${NC} )" confirm
+read -p "$(echo -e ${YELLOW}Are you sure you want to delete this instance? [y/N]:${NC} )" confirm </dev/tty
 confirm=${confirm:-N}
 
 if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
