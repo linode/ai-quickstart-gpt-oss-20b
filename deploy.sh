@@ -14,7 +14,7 @@ set -euo pipefail
 #==============================================================================
 
 # Get directory of this script (empty if running via curl pipe)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" 2>/dev/null)" 2>/dev/null && pwd 2>/dev/null || echo "")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}" 2>/dev/null)" 2>/dev/null && pwd 2>/dev/null || echo "")"
 
 # Remote repository base URL (for downloading files when running remotely)
 # TODO: Remove token parameters once repository is public
@@ -63,8 +63,10 @@ _cleanup_temp_files() {
     fi
 }
 
-# Register cleanup on exit
-trap _cleanup_temp_files EXIT INT TERM
+# Register cleanup on exit (EXIT handles normal exit and will also run after INT/TERM)
+trap _cleanup_temp_files EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Setup required files (download if needed)
 _setup_required_files
