@@ -1,11 +1,13 @@
 # Akamai inference Cloud - AI Quickstart gpt-oss-20b LLM
 
-Automated deployment script for running a AI inference stack on Akamai Cloud (Linode) GPU instances. Get vLLM and Open-WebUI up and running in minutes with a single command.
+- Automated deployment script to run your own private, self-hosted LLM inference server on Akamai Cloud GPU instances. 
+- Pre-configured with OpenAI's gpt-oss-20b (20B parameter open-source model) optimized for instruction following. 
+- Get vLLM and Open-WebUI up and running in minutes with a single command.
 
 -----------------------------------------
 ## 🚀 Quick Start
 
-Deploy your AI stack with a single command:
+Just run this single command:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/linode/ai-quickstart-gpt-oss-20b/main/deploy.sh)
@@ -14,7 +16,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/linode/ai-quickstart-gpt-oss
 That's it! The script will download required files and guide you through the interactive deployment process.
 
 ## ✨ Features
-- Fully Automated Deployment: handles instance creation to service verification with real-time progress tracking
+- Fully Automated Deployment: handles instance creation with real-time progress tracking
 - Basic AI Stack: vLLM for LLM inference with pre-loaded model and Open-WebUI for chat interface
 - Cross-Platform Support: Works on macOS and Windows (Git Bash/WSL)
 
@@ -79,7 +81,7 @@ cd ai-quickstart-gpt-oss-20b
 ```
 
 > [!NOTE]
-> if you like to add more containers check out docker compose template file
+> if you like to add more services check out docker compose template file
 > ```
 > vi /template/docker-compose.yml
 > ```
