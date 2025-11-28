@@ -32,27 +32,10 @@ That's it! The script will download required files and guide you through the int
 - Systemd service for automatic startup on reboot
 
 ### Docker container
-- **vLLM**: OpenAI-compatible API endpoint on port 8000
-- **Open-WebUI**: Web-based chat interface on port 3000
-
-> [!NOTE]
-> if you like to add more containers check out docker compose template file
-> ```
-> vi /template/docker-compose.yml
-> ```
-> 
-
-### Configuration files in GPU Instance
-```
-   # Install script called by cloud-init service
-   /opt/ai-quickstart-llm/install.sh
-
-   # docker compose file calle by systemctl at startup
-   /opt/ai-quickstart-llm/docker-compose.yml
-
-   # service definition
-   /etc/systemd/system/ai-quickstart-llm.service
-```
+| | Service | Description | 
+|:--:|:--|:--|
+| <img src="https://raw.githubusercontent.com/vllm-project/media-kit/main/vLLM-Logo.png" alt="vLLM" width="32"/> | **vLLM** | High-throughput LLM inference engine with OpenAI-compatible API (port 8000) |
+| <img src="https://raw.githubusercontent.com/open-webui/open-webui/main/static/favicon.png" alt="Open-WebUI" width="32"/> | **Open-WebUI** | Feature-rich web interface for AI chat interactions (port 3000) |
 
 -----------------------------------------
 
@@ -95,6 +78,13 @@ cd ai-quickstart-llm
 ./deploy.sh
 ```
 
+> [!NOTE]
+> if you like to add more containers check out docker compose template file
+> ```
+> vi /template/docker-compose.yml
+> ```
+>
+
 ### Follow Interactive Prompts
 The script will ask you to:
 - Choose a region (e.g., us-east, eu-west)
@@ -123,6 +113,18 @@ Once complete, you'll see:
 🔐 Access Credentials:
    SSH:         ssh root@<instance-ip>
    SSH Key:     /path/to/your/key
+```
+
+### Configuration files in GPU Instance
+```
+   # Install script called by cloud-init service
+   /opt/ai-quickstart-llm/install.sh
+
+   # docker compose file calle by systemctl at startup
+   /opt/ai-quickstart-llm/docker-compose.yml
+
+   # service definition
+   /etc/systemd/system/ai-quickstart-llm.service
 ```
 
 -----------------------------------------
