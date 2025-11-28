@@ -6,7 +6,7 @@ notify() {
     curl -s -d "$message" "https://ntfy.sh/$(hostname)" || true
 }
 
-notify "☁️ cloud-init package install finished"
+notify "☁️ cloud-init package install finished. starting install.sh..."
 sleep 2
 
 # Install NVIDIA drivers
@@ -68,7 +68,7 @@ systemctl daemon-reload
 systemctl enable ai-quickstart-llm.service
 
 # Pull latest Docker images
-notify "⬇️ Pulling latest vLLM & OpenWebUI container images... (this may take 2 - 3 min)..."
+notify "⬇️ Downloading latest vLLM & OpenWebUI container images... (this may take 2 - 3 min)..."
 cd /opt/ai-quickstart-llm
 docker compose pull --quiet || true
 

@@ -12,10 +12,13 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
     command:
-      - --model=unsloth/gpt-oss-20b
+      - openai/gpt-oss-20b
       - --kv-cache-dtype=fp8
       - --gpu-memory-utilization=0.9
       - --max-model-len=16384
+      - --max-num-seqs=8
+      - --enable-prompt-tokens-details
+
     healthcheck:
       test: ["CMD", "curl", "-f", "-s", "http://localhost:8000/v1/models"]
       interval: 10s

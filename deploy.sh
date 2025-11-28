@@ -8,28 +8,21 @@ set -euo pipefail
 # This script automates the creation of a GPU instance with vLLM and Open-WebUI
 #
 # Usage:
-#   ./setup.sh
+#   ./deploy.sh
 #
 #==============================================================================
 
 # Get directory of this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source helper functions
-source "${SCRIPT_DIR}/script/ask_selection.sh"
+# Source quickstart tools library
+source "${SCRIPT_DIR}/script/quickstart_tools.sh"
 
-# Additional colors not defined in ask_selection.sh
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-MAGENTA='\033[0;35m'
-BOLD='\033[1m'
+# Log file setup
+LOG_FILE="${SCRIPT_DIR}/deploy-$(date +%Y%m%d-%H%M%S).log"
 
-# API base URL
-readonly API_BASE="https://api.linode.com/v4"
+# Colors and API_BASE are now exported by quickstart_tools.sh
+# RED, GREEN, YELLOW, BLUE, CYAN, NC, MAGENTA, BOLD, API_BASE
 
 # Global variables
 TOKEN=""
@@ -41,31 +34,13 @@ SELECTED_TYPE=""
 INSTANCE_IP=""
 INSTANCE_ID=""
 
-# Log file setup
-LOG_FILE="${SCRIPT_DIR}/start-$(date +%Y%m%d-%H%M%S).log"
-
 #==============================================================================
-# Helper Functions
+# Local Helper Functions (extended from quickstart_tools)
 #==============================================================================
 
-# Log to file (strips color codes)
-log_to_file() {
-    local timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-    local level="$1"
-    shift
-    # Strip ANSI color codes and log
-    echo "[$timestamp] [$level] $*" | sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"
-}
-
-# Print colored message
-print_msg() {
-    local color="$1"
-    shift
-    echo -e "${color}$*${NC}"
-}
-
-# Print error and exit
-error_exit() {
+# Print error and exit (with instance deletion option)
+# This extends error_exit with instance cleanup capability
+_error_exit_with_cleanup() {
     local message="$1"
     local offer_delete="${2:-false}"
 
@@ -83,9 +58,7 @@ error_exit() {
             echo ""
             print_msg "$YELLOW" "Deleting instance (ID: ${INSTANCE_ID})..."
 
-            if curl -s -X DELETE \
-                -H "Authorization: Bearer ${TOKEN}" \
-                "${API_BASE}/linode/instances/${INSTANCE_ID}" > /dev/null; then
+            if delete_instance "$TOKEN" "$INSTANCE_ID" > /dev/null; then
                 success "Instance deleted successfully"
             else
                 warn "Failed to delete instance. You may need to delete it manually from the Linode Cloud Manager"
@@ -98,32 +71,6 @@ error_exit() {
     fi
 
     exit 1
-}
-
-# Print success message
-success() {
-    print_msg "$GREEN" "✅ $*"
-}
-
-# Print info message
-info() {
-    print_msg "$CYAN" "ℹ️  $*"
-}
-
-# Print warning message
-warn() {
-    print_msg "$YELLOW" "⚠️  $*"
-}
-
-# Show banner
-show_banner() {
-    clear
-    cat "${SCRIPT_DIR}/script/logo/akamai.txt" || {
-        echo "==================================="
-        echo "  Akamai Cloud GPU Instance Setup"
-        echo "==================================="
-    }
-    echo ""
 }
 
 #==============================================================================
@@ -148,29 +95,15 @@ print_msg "$GREEN" "Setup time: ~10-15 minutes"
 print_msg "$CYAN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-sleep 3
+sleep 5
 
 #==============================================================================
 # Get Token from linode-cli or Linode OAuth
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "🔑 Step 1/10: Obtaining Linode API credentials..."
-echo "------------------------------------------------------"
+show_step "🔑 Step 1/10: Obtaining Linode API credentials..."
 
-# Try to get token from check_linodecli_token.sh
-if [ -f "${SCRIPT_DIR}/script/check_linodecli_token.sh" ]; then
-    TOKEN=$("${SCRIPT_DIR}/script/check_linodecli_token.sh" --silent 2>/dev/null || true)
-fi
-
-# If no token, try OAuth
-if [ -z "$TOKEN" ] && [ -f "${SCRIPT_DIR}/script/linode_oauth.sh" ]; then
-    TOKEN=$("${SCRIPT_DIR}/script/linode_oauth.sh" || true)
-fi
-
-# Verify we have a token
-if [ -z "$TOKEN" ]; then
-    error_exit "Failed to get API token. Please configure linode-cli or run linode_oauth.sh"
-fi
+# Get token using quickstart_tools (env → linode-cli → OAuth)
+TOKEN=$(get_linode_token) || error_exit "Failed to get API token. Please configure linode-cli or set LINODE_TOKEN"
 
 success "API credentials obtained successfully"
 echo ""
@@ -178,22 +111,9 @@ echo ""
 #==============================================================================
 # Get GPU Availability
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "📊 Step 2/10: Fetching GPU availability..."
-echo "------------------------------------------------------"
+show_step "📊 Step 2/10: Fetching GPU availability..."
 
-if [ ! -f "${SCRIPT_DIR}/script/get_gpu_availability.sh" ]; then
-    error_exit "get_gpu_availability.sh not found"
-fi
-
-# Export token so get_gpu_availability.sh doesn't need to fetch it again
-export LINODE_TOKEN="$TOKEN"
-
-GPU_DATA=$("${SCRIPT_DIR}/script/get_gpu_availability.sh" --silent)
-
-if [ -z "$GPU_DATA" ]; then
-    error_exit "Failed to fetch GPU availability data"
-fi
+GPU_DATA=$(get_gpu_availability "$TOKEN") || error_exit "Failed to fetch GPU availability data"
 
 info "GPU availability data fetched successfully"
 echo ""
@@ -201,36 +121,22 @@ echo ""
 #==============================================================================
 # Let User Select Region
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "🌍 Step 3/10: Select Region"
-echo "------------------------------------------------------"
+show_step "🌍 Step 3/10: Select Region"
 
-# Extract regions with available GPU instances
-AVAILABLE_REGIONS=()
-while IFS= read -r line; do
-    AVAILABLE_REGIONS+=("$line")
-done < <(echo "$GPU_DATA" | jq -r '.regions[] | "\(.id)|\(.label)|\(.instance_types | join(","))"')
+# Get available regions using quickstart_tools
+get_available_regions "$GPU_DATA" REGION_LIST REGION_DATA
 
-if [ ${#AVAILABLE_REGIONS[@]} -eq 0 ]; then
+if [ ${#REGION_LIST[@]} -eq 0 ]; then
     error_exit "No regions with available GPU instances found"
 fi
 
 print_msg "$GREEN" "Available Regions:"
 
-# Build display array for regions with proper formatting
-REGION_DISPLAY=()
-for i in "${!AVAILABLE_REGIONS[@]}"; do
-    IFS='|' read -r region_id region_label types <<< "${AVAILABLE_REGIONS[$i]}"
-    # Format: "region_id (12 chars) region_label"
-    printf -v formatted_option "%-12s %s" "$region_id" "$region_label"
-    REGION_DISPLAY+=("$formatted_option")
-done
-
 # Use ask_selection for region choice
-ask_selection "Enter region number" REGION_DISPLAY "" region_choice SELECTED_REGION_DISPLAY
+ask_selection "Enter region number" REGION_LIST "" region_choice
 
-# Get full region info from the original array using the selection index
-IFS='|' read -r SELECTED_REGION region_label region_types <<< "${AVAILABLE_REGIONS[$((region_choice-1))]}"
+# Get full region info from the data array using the selection index
+IFS='|' read -r SELECTED_REGION region_label available_instance_types <<< "${REGION_DATA[$((region_choice-1))]}"
 
 echo "Selected region: $SELECTED_REGION ($region_label)"
 log_to_file "INFO" "User selected region: $SELECTED_REGION ($region_label)"
@@ -239,43 +145,22 @@ echo ""
 #==============================================================================
 # Let User Select Instance Type
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "💻 Step 4/10: Select Instance Type"
-echo "------------------------------------------------------"
+show_step "💻 Step 4/10: Select Instance Type"
 
-# Get available instance types for selected region
 print_msg "$GREEN" "Available Instance Types in $SELECTED_REGION:"
 
-# Build arrays for instance types
-declare -a TYPE_OPTIONS=()
-declare -a TYPE_DISPLAY=()
-default_type_index=""
+# Get available instance types for selected region using quickstart_tools
+get_gpu_details "$GPU_DATA" "$available_instance_types" "g2-gpu-rtx4000a1-s" TYPE_DISPLAY TYPE_DATA default_type_index
 
-while IFS= read -r type_data; do
-    type_id=$(echo "$type_data" | jq -r '.id')
-    echo "$region_types" | grep -q "$type_id" || continue
-
-    # Extract all fields and format display string with proper spacing
-    TYPE_OPTIONS+=("$type_data")
-    IFS=$'\t' read -r id lbl vcpus mem hr mo < <(echo "$type_data" | jq -r '[.id, .label, .vcpus, (.memory/1024|floor), .hourly, .monthly] | @tsv')
-    printf -v formatted_option "%-20s %-35s ${CYAN}%d vCPUs, %dGB RAM - \$%.2f/hr (\$%.1f/mo)${NC}" "$id" "$lbl" "$vcpus" "$mem" "$hr" "$mo"
-    TYPE_DISPLAY+=("$formatted_option")
-
-    # Set default to first g2-gpu-rtx4000a1-s found
-    if [ "$id" = "g2-gpu-rtx4000a1-s" ] && [ -z "$default_type_index" ]; then
-        default_type_index=${#TYPE_DISPLAY[@]}
-    fi
-done < <(echo "$GPU_DATA" | jq -c '.instance_types[]')
-
-if [ ${#TYPE_OPTIONS[@]} -eq 0 ]; then
-    error_exit "No instance types available in selected region"
+if [ ${#TYPE_DISPLAY[@]} -eq 0 ]; then
+    error_exit "No GPU instance available in selected region"
 fi
 
 # Use ask_selection for instance type choice
-ask_selection "Enter instance type number" TYPE_DISPLAY "$default_type_index" type_choice SELECTED_TYPE_DISPLAY "\n     ${MAGENTA}⭐ RECOMMENDED${NC}"
+ask_selection "Enter instance type number" TYPE_DISPLAY "$default_type_index" type_choice "\n     ${MAGENTA}⭐ RECOMMENDED${NC}"
 
 # Extract the actual type ID from the selected option
-SELECTED_TYPE=$(echo "${TYPE_OPTIONS[$((type_choice-1))]}" | jq -r '.id')
+SELECTED_TYPE=$(echo "${TYPE_DATA[$((type_choice-1))]}" | jq -r '.id')
 
 echo "Selected instance type: $SELECTED_TYPE"
 log_to_file "INFO" "User selected instance type: $SELECTED_TYPE"
@@ -284,27 +169,10 @@ echo ""
 #==============================================================================
 # Let User Specify Instance Label
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "🏷️  Step 5/10: Instance Label"
-echo "------------------------------------------------------"
-echo ""
-
-# Validate label: alphanumeric start/end, only a-z A-Z 0-9 _ - . allowed, no consecutive specials
-validate_label() {
-    [[ ! "$1" =~ ^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$ ]] && echo "Label must start/end with alphanumeric, use only: a-z A-Z 0-9 _ - ." && return 1
-    [[ "$1" =~ --|__|\.\. ]] && echo "Label cannot contain consecutive -- __ or .." && return 1
-    return 0
-}
+show_step "🏷️  Step 5/10: Instance Label"
 
 DEFAULT_LABEL="ai-quickstart-llm-$(date +%y%m%d%H%M)"
-while true; do
-    printf '\n\n\n\n\n\033[5A'        # Print 5 blank lines to scroll up
-    read -p "$(echo -e ${YELLOW}Enter instance label [default: $DEFAULT_LABEL]:${NC} )" user_label
-    INSTANCE_LABEL="${user_label:-$DEFAULT_LABEL}"
-    validate_label "$INSTANCE_LABEL" && break
-    print_msg "$RED" "❌ Invalid label format"
-    echo ""
-done
+ask_input "Enter instance label" "$DEFAULT_LABEL" "validate_instance_label" "❌ Invalid label format" INSTANCE_LABEL
 
 echo "Instance label: $INSTANCE_LABEL"
 log_to_file "INFO" "User set instance label: $INSTANCE_LABEL"
@@ -313,101 +181,43 @@ echo ""
 #==============================================================================
 # Let User Specify Root Password
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "🔐 Step 6/10: Root Password"
-echo "------------------------------------------------------"
-echo ""
-
-# Function to generate random password
-generate_password() {
-    # Generate a 15 character password with uppercase, lowercase, numbers, and special chars
-    local chars='A-Za-z0-9!@#$%^&*()_+-='
-    LC_ALL=C tr -dc "$chars" < /dev/urandom | head -c 15 2>/dev/null || true
-}
-
-# Function to validate password
-validate_password() {
-    local pwd="$1"
-    [[ ${#pwd} -ge 11 && "$pwd" =~ [A-Z] && "$pwd" =~ [a-z] && "$pwd" =~ [0-9] && "$pwd" =~ [^A-Za-z0-9] ]]
-}
+show_step "🔐 Step 6/10: Root Password"
 
 info "Password requirements: min 11 chars, must include uppercase, lowercase, numbers, and special characters"
-
-while true; do
-    printf '\n\n\n\n\n\033[5A'        # Print 5 blank lines to scroll up
-    read -s -p "$(echo -e ${YELLOW}Enter root password [leave empty to auto-generate]:${NC} )" user_password
-    echo ""
-
-    if [ -z "$user_password" ]; then
-        INSTANCE_PASSWORD=$(generate_password)
-        [ -z "$INSTANCE_PASSWORD" ] || [ ${#INSTANCE_PASSWORD} -lt 10 ] && error_exit "Failed to generate password"
-        log_to_file "INFO" "Password auto-generated: $INSTANCE_PASSWORD"
-        echo "Password Auto-generated." && break
-    fi
-
-    validate_password "$user_password" || { warn "Password does not meet requirements. Please try again."; continue; }
-    read -s -p "$(echo -e ${YELLOW}Confirm password:${NC} )" user_password_confirm
-    echo ""
-    if [ "$user_password" = "$user_password_confirm" ]; then
-        INSTANCE_PASSWORD="$user_password"
-        log_to_file "INFO" "User typed password: *************"
-        echo "Password accepted"
-        break
-    fi
-    warn "Passwords do not match. Please try again."
-done
+ask_password INSTANCE_PASSWORD
 echo ""
 
 #==============================================================================
 # Let User Select SSH Public Key
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "🔑 Step 7/10: SSH Public Key (Required)"
-echo "------------------------------------------------------"
-echo ""
+show_step "🔑 Step 7/10: SSH Public Key (Required)"
 
 info "An SSH key is required for secure access to the instance"
 
-# Find SSH public keys (portable array population)
-SSH_KEYS=()
-while IFS= read -r key; do
-    SSH_KEYS+=("$key")
-done < <(find "$HOME/.ssh" -maxdepth 1 -name "*.pub" -type f 2>/dev/null | sort)
-
-# Build display array for SSH keys
+# Get SSH keys using quickstart_tools
 print_msg "$GREEN" "SSH Key Options:"
-declare -a SSH_KEY_DISPLAY=()
-
-for i in "${!SSH_KEYS[@]}"; do
-    key_basename="$(basename "${SSH_KEYS[$i]}")"
-    key_preview="$(head -c 60 "${SSH_KEYS[$i]}")"
-    printf -v formatted_option "%-30s %s..." "$key_basename" "$key_preview"
-    SSH_KEY_DISPLAY+=("$formatted_option")
-done
-
-# Add auto-generate option
-SSH_KEY_DISPLAY+=("${YELLOW}Auto-generate new SSH key pair${NC}")
+get_ssh_keys SSH_KEY_DISPLAY SSH_KEY_PATHS
 
 # Use ask_selection for SSH key choice
-ask_selection "Enter SSH key option" SSH_KEY_DISPLAY "" key_choice SELECTED_KEY_DISPLAY
+ask_selection "Enter SSH key option" SSH_KEY_DISPLAY "" key_choice
 
 # Handle selection
-if [ "$key_choice" -le ${#SSH_KEYS[@]} ]; then
-    SSH_PUBLIC_KEY=$(cat "${SSH_KEYS[$((key_choice-1))]}")
-    log_to_file "INFO" "User selected SSH key: $(basename "${SSH_KEYS[$((key_choice-1))]}")"
-    echo "Selected SSH key: $(basename "${SSH_KEYS[$((key_choice-1))]}")"
-else
-    NEW_KEY_PATH="$HOME/.ssh/linode-${INSTANCE_LABEL}-$(date +%s)"
-    NEW_KEY_NAME="$(basename "$NEW_KEY_PATH")"
-    info "Generating new SSH key pair: ${NEW_KEY_NAME}"
-    ssh-keygen -t ed25519 -f "$NEW_KEY_PATH" -N "" -C "${NEW_KEY_NAME}" >/dev/null 2>&1 || error_exit "Failed to generate SSH key"
-    SSH_PUBLIC_KEY=$(cat "${NEW_KEY_PATH}.pub")
-    log_to_file "INFO" "Auto-generated SSH key: ${NEW_KEY_PATH}"
-    log_to_file "INFO" "SSH public key: ${SSH_PUBLIC_KEY}"
-    success "Generated new SSH key: ${NEW_KEY_PATH}"
-    info "Private key saved to: ${NEW_KEY_PATH}"
+if [ "$key_choice" -gt ${#SSH_KEY_PATHS[@]} ]; then
+    # Auto-generate new key and add to paths array
+    AUTO_KEY_PATH="$HOME/.ssh/${INSTANCE_LABEL}"
+    info "Generating new SSH key pair: $(basename "$AUTO_KEY_PATH")"
+    SSH_PUBLIC_KEY=$(generate_ssh_key "$AUTO_KEY_PATH" "$(basename "$AUTO_KEY_PATH")") || error_exit "Failed to generate SSH key"
+    SSH_KEY_PATHS+=("${AUTO_KEY_PATH}.pub")
+    log_to_file "INFO" "Auto-generated SSH key: ${AUTO_KEY_PATH}"
+    success "Generated new SSH key: ${AUTO_KEY_PATH}"
     warn "IMPORTANT: Save the private key securely!"
+else
+    SSH_PUBLIC_KEY=$(cat "${SSH_KEY_PATHS[$((key_choice-1))]}")
+    log_to_file "INFO" "User selected SSH key: $(basename "${SSH_KEY_PATHS[$((key_choice-1))]}")"
+    echo "Selected SSH key: $(basename "${SSH_KEY_PATHS[$((key_choice-1))]}")"
 fi
+SSH_KEY_FILE="${SSH_KEY_PATHS[$((key_choice-1))]%.pub}"
+SSH_KEY_NAME="$(basename "${SSH_KEY_PATHS[$((key_choice-1))]}")"
 echo ""
 
 #==============================================================================
@@ -440,9 +250,7 @@ CLOUD_INIT_DATA=$(cat "${SCRIPT_DIR}/template/cloud-init.yaml" | \
 #==============================================================================
 # Show Confirmation Prompt
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "📝 Step 8/10: Confirmation ..."
-echo "------------------------------------------------------"
+show_step "📝 Step 8/10: Confirmation ..."
 
 UBUNTU_IMAGE="linode/ubuntu24.04"
 
@@ -451,15 +259,11 @@ echo "  Region: $SELECTED_REGION"
 echo "  Type: $SELECTED_TYPE"
 echo "  Label: $INSTANCE_LABEL"
 echo "  Image: $UBUNTU_IMAGE"
-if [ "$key_choice" -gt ${#SSH_KEYS[@]} ]; then
-    echo "  SSH Key: ${NEW_KEY_NAME} (auto-generated)"
-else
-    echo "  SSH Key: $(basename "${SSH_KEYS[$((key_choice-1))]}")"
-fi
+echo "  SSH Key: $SSH_KEY_NAME"
 echo ""
 
 # Ask for confirmation
-printf '\n\n\n\n\n\033[5A'        # Print 5 blank lines to scroll up
+scroll_up
 read -p "$(echo -e ${YELLOW}Proceed with instance creation? [Y/n]:${NC} )" confirm
 confirm=${confirm:-Y}
 
@@ -472,35 +276,18 @@ echo ""
 #==============================================================================
 # Create Instance via Linode API
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "🚀 Step 9/10: Creating instance ..."
-echo "------------------------------------------------------"
-printf '\n\n\n\n\n\033[5A'        # Print 5 blank lines to scroll up
+show_step "🚀 Step 9/10: Creating instance ..."
+scroll_up
 
 # Encode cloud-init as base64
 USER_DATA_BASE64=$(echo "$CLOUD_INIT_DATA" | base64 | tr -d '\n')
 
-# Build JSON payload
-JSON_PAYLOAD=$(jq -n \
-    --arg label "$INSTANCE_LABEL" \
-    --arg region "$SELECTED_REGION" \
-    --arg type "$SELECTED_TYPE" \
-    --arg image "$UBUNTU_IMAGE" \
-    --arg pass "$INSTANCE_PASSWORD" \
-    --arg userdata "$USER_DATA_BASE64" \
-    --arg sshkey "$SSH_PUBLIC_KEY" \
-    '{label: $label, region: $region, type: $type, image: $image, root_pass: $pass,
-      metadata: {user_data: $userdata}, authorized_keys: [$sshkey],
-      booted: true, backups_enabled: false, private_ip: false}')
-
-log_to_file "INFO" "API Request: POST ${API_BASE}/linode/instances"
+# Create instance using quickstart_tools
+log_to_file "INFO" "API Request: POST /linode/instances"
 log_to_file "INFO" "Request payload: label=$INSTANCE_LABEL, region=$SELECTED_REGION, type=$SELECTED_TYPE, image=$UBUNTU_IMAGE"
 
-CREATE_RESPONSE=$(curl -s -X POST \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/json" \
-    "${API_BASE}/linode/instances" \
-    -d "$JSON_PAYLOAD")
+CREATE_RESPONSE=$(create_instance "$TOKEN" "$INSTANCE_LABEL" "$SELECTED_REGION" "$SELECTED_TYPE" \
+    "$UBUNTU_IMAGE" "$INSTANCE_PASSWORD" "$SSH_PUBLIC_KEY" "$USER_DATA_BASE64")
 
 log_to_file "INFO" "API Response: $CREATE_RESPONSE"
 
@@ -516,25 +303,18 @@ if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "null" ]; then
     error_exit "Failed to create instance: Invalid response"
 fi
 
-# Save instance data with password
-INSTANCE_FILE="${SCRIPT_DIR}/${INSTANCE_LABEL}.json"
-echo "$CREATE_RESPONSE" | jq --arg password "$INSTANCE_PASSWORD" '. + {root_password: $password}' > "$INSTANCE_FILE"
-
 log_to_file "INFO" "Instance created: ID=$INSTANCE_ID, IP=$INSTANCE_IP, Label=$INSTANCE_LABEL"
 
 info "Instance created successfully, starting up..."
 echo "  Instance ID: $INSTANCE_ID"
 echo "  IP Address: $INSTANCE_IP"
-echo "  Instance detail saved to:   $INSTANCE_FILE"
 echo ""
 
 #==============================================================================
 # Wait for Instance to be Ready
 #==============================================================================
-echo "------------------------------------------------------"
-print_msg "$BOLD" "⏳ Step 10: Monitoring Deployment ..."
-echo "------------------------------------------------------"
-printf '\n\n\n\n\n\n\n\n\033[8A'        # Print 8 blank lines to scroll up
+show_step "⏳ Step 10: Monitoring Deployment ..."
+scroll_up 8
 
 #------------------------------------------------------------------------------
 # Phase 1: Wait for instance status to become "running" (max 3 minutes)
@@ -544,21 +324,20 @@ START_TIME=$(date +%s)
 TIMEOUT=180
 
 while true; do
-    STATUS=$(curl -s -H "Authorization: Bearer ${TOKEN}" "${API_BASE}/linode/instances/${INSTANCE_ID}" | jq -r '.status')
-    [ "$STATUS" = "running" ] && break
-
     ELAPSED=$(($(date +%s) - START_TIME))
-    [ $ELAPSED -ge $TIMEOUT ] && break
-
     ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
-    echo -ne "\r\033[K${YELLOW}Status: ${STATUS:-unknown} - Elapsed: ${ELAPSED_STR}${NC}"
+
+    STATUS=$(linode_api_call "/linode/instances/${INSTANCE_ID}" "$TOKEN" | jq -r '.status')
+    [ "$STATUS" = "running" ] && break
+    [ $ELAPSED -ge $TIMEOUT ] && break
+    
+    progress "$YELLOW" "Status: ${STATUS:-unknown} - Elapsed: ${ELAPSED_STR}"
     sleep 5
 done
 
-[ "$STATUS" != "running" ] && error_exit "Instance failed to reach 'running' status" true
-ELAPSED=$(($(date +%s) - START_TIME))
-log_to_file "INFO" "Instance status reached 'running' in ${ELAPSED}s"
-echo -ne "\r\033[KInstance is now in running status (took ${ELAPSED}s)"
+[ "$STATUS" != "running" ] && _error_exit_with_cleanup "Instance failed to reach 'running' status" true
+log_to_file "INFO" "Instance status reached 'running' in ${ELAPSED_STR}"
+progress "$NC" "Instance is now in running status (took ${ELAPSED_STR})"
 echo ""
 echo ""
 
@@ -566,7 +345,8 @@ echo ""
 # Phase 2: Waiting for cloud-init to finish package install (max 3 minutes)
 #------------------------------------------------------------------------------
 print_msg "$YELLOW" "Waiting cloud-init to finish installing required packages ... (this may take 3 - 5 minutes)"
-printf '\n\n\n\n\n\n\n\n\033[8A'        # Print 8 blank lines to scroll up
+scroll_up 8
+START_TIME=$(date +%s)
 
 # Start ntfy.sh JSON stream monitor
 # Wait up to 180s for first message event, then continue until "Rebooting" or "Starting"
@@ -579,7 +359,7 @@ while IFS= read -t 300 -r line <&3; do
     [ "$event" = "message" ] && break
 done || {
     exec 3<&-
-    error_exit "Timeout: No cloud-init progress for 300 seconds" true
+    _error_exit_with_cleanup "Timeout: No cloud-init progress for 300 seconds" true
 }
 
 # Process first message and continue until termination keyword found
@@ -595,47 +375,45 @@ while true; do
 done
 
 exec 3<&-
+ELAPSED=$(($(date +%s) - START_TIME))
 log_to_file "INFO" "Cloud-init package installation completed"
+echo -e "cloud-init process completed (took $([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s"))"
 echo ""
+
+# Wait 5 seconds for reboot to initiate
+sleep 5
 
 #------------------------------------------------------------------------------
 # Phase 3: Wait for Instance to reboot (max 2 minutes)
 #------------------------------------------------------------------------------
-sleep 5
-printf '\n\n\n\n\n\033[5A'
+print_msg "$YELLOW" "Waiting for Instance to reboot... (this may take 1 - 2 minutes)"
+scroll_up 8
 START_TIME=$(date +%s)
+
+# Setup SSH command with options to suppress warnings
+SSH_OPTS=(-o ConnectTimeout=3 -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$SSH_KEY_FILE")
 
 while true; do
     ELAPSED=$(($(date +%s) - START_TIME))
-    echo -ne "\r\033[K${YELLOW}Waiting for Instance to reboot... Elapsed: $([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")${NC}"
+    ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
+    progress "$YELLOW" "Status:booting ... Elapsed: ${ELAPSED_STR}"
+
+    [ $ELAPSED -ge 120 ] && _error_exit_with_cleanup "Instance failed to become accessible" true
+    ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" exit 2>/dev/null && break
     sleep 2
-    nc -z -w 3 "${INSTANCE_IP}" 22 &>/dev/null && break
-    [ $ELAPSED -ge 120 ] && error_exit "Instance failed to become accessible" true
 done
-REBOOT_TIME=$(($(date +%s) - START_TIME))
-log_to_file "INFO" "Instance rebooted and SSH accessible in ${REBOOT_TIME}s"
+log_to_file "INFO" "Instance rebooted and SSH accessible in ${ELAPSED_STR}s"
+progress "$NC" "Instance is now running status. (took ${ELAPSED_STR})"
 echo ""
-echo "Instance is now running status (took ${REBOOT_TIME}s)"
 echo ""
 
 #------------------------------------------------------------------------------
 # Phase 4: Verify Containers are Running
 #------------------------------------------------------------------------------
-
-# Determine SSH key file for SSH access
-if [ -n "${NEW_KEY_PATH:-}" ]; then
-    SSH_KEY_FILE="$NEW_KEY_PATH"
-else
-    SSH_KEY_FILE="${SSH_KEYS[$((key_choice-1))]%.pub}"
-fi
-
-# Setup SSH command with options to suppress warnings
-SSH_CMD="ssh -i $SSH_KEY_FILE -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes"
-
-# Verify containers are running
-printf '\n\n\n\n\n\033[5A'        # Print 5 blank lines to scroll up
 print_msg "$YELLOW" "Waiting for containers to start..."
-CONTAINER_CHECK=$($SSH_CMD "root@${INSTANCE_IP}" "docker ps --format '{{.Names}}' 2>/dev/null" || echo "")
+scroll_up 8
+
+CONTAINER_CHECK=$(ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" "docker ps --format '{{.Names}}' 2>/dev/null" || echo "")
 
 if echo "$CONTAINER_CHECK" | grep -q "vllm" && echo "$CONTAINER_CHECK" | grep -q "open-webui"; then
     log_to_file "INFO" "Docker containers verified: vLLM and Open-WebUI running"
@@ -646,49 +424,53 @@ else
 fi
 echo ""
 
-printf '\n\n\n\n\n\033[5A'
+print_msg "$YELLOW" "Waiting for Open-WebUI to be ready..."
+scroll_up 8
 START_TIME=$(date +%s)
 
 while true; do
     ELAPSED=$(($(date +%s) - START_TIME))
-    if [ "$($SSH_CMD "root@${INSTANCE_IP}" "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/health 2>/dev/null" || echo "000")" = "200" ]; then
+    ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
+    progress "$YELLOW" "Status:starting ... Elapsed: ${ELAPSED_STR}"
+
+    if [ "$(ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/health 2>/dev/null" || echo "000")" = "200" ]; then
         log_to_file "INFO" "Open-WebUI health check passed in ${ELAPSED}s"
-        echo ""
-        echo "Open-WebUI is ready (took ${ELAPSED}s)"
-        echo ""
+        progress "$NC" "Open-WebUI is ready (took ${ELAPSED_STR})"
         break
     fi
     if [ $ELAPSED -ge 30 ]; then
-        log_to_file "WARN" "Open-WebUI health check timeout after ${ELAPSED}s"
+        log_to_file "WARN" "Open-WebUI health check timeout after ${ELAPSED_STR}"
         warn "Timeout waiting for Open-WebUI health check. It may still be starting up."
-        echo ""
         break
     fi
-    echo -ne "\r\033[K${YELLOW}Waiting for Open-WebUI to be ready... Elapsed: $([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")${NC}"
     sleep 2
 done
+echo ""
+echo ""
 
-printf '\n\n\n\n\n\033[5A'
+print_msg "$YELLOW" "Waiting for vLLM to download gpt-oss model... (this may take 5-8 minutes)"
+scroll_up 8
 START_TIME=$(date +%s)
 
 while true; do
     ELAPSED=$(($(date +%s) - START_TIME))
-    if $SSH_CMD "root@${INSTANCE_IP}" "curl -s http://localhost:8000/v1/models 2>/dev/null" | grep -q '"id":"unsloth/gpt-oss-20b"'; then
-        log_to_file "INFO" "vLLM model loaded successfully in ${ELAPSED}s"
-        echo ""
-        echo "vLLM model is loaded and ready (took ${ELAPSED}s)"
-        echo ""
+    ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
+    progress "$YELLOW" "Status:downloading model ... Elapsed: ${ELAPSED_STR}"
+
+    if ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" "curl -s http://localhost:8000/v1/models 2>/dev/null" | grep -q '"id":"unsloth/gpt-oss-20b"'; then
+        log_to_file "INFO" "vLLM model loaded successfully in ${ELAPSED_STR}"
+        progress "$NC" "vLLM model is loaded (took ${ELAPSED_STR})"
         break
     fi
     if [ $ELAPSED -ge 600 ]; then
-        log_to_file "WARN" "vLLM model load timeout after ${ELAPSED}s"
+        log_to_file "WARN" "vLLM model load timeout after ${ELAPSED_STR}"
         warn "Timeout waiting for vLLM model to load. Model may still be downloading."
-        echo ""
         break
     fi
-    echo -ne "\r\033[K${YELLOW}Waiting for vLLM to download gpt-oss model... Elapsed: $([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s") - ( This make takes 2-3 minutes )${NC}"
     sleep 2
 done
+echo ""
+echo ""
 
 #==============================================================================
 # Show Access URL
@@ -717,7 +499,6 @@ echo "   Password:    ${INSTANCE_PASSWORD}"
 echo ""
 print_msg "$CYAN" "📋 Execution Log:"
 echo "   Log file:       $LOG_FILE"
-echo "   Instance Data:  $INSTANCE_FILE"
 echo ""
 print_msg "$GREEN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
