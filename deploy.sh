@@ -504,7 +504,7 @@ done
 echo ""
 echo ""
 
-print_msg "$YELLOW" "Waiting for vLLM to download gpt-oss model... (this may take 5-8 minutes)"
+print_msg "$YELLOW" "Waiting for vLLM to download gpt-oss model... (this may take 3-5 minutes)"
 scroll_up 8
 START_TIME=$(date +%s)
 
