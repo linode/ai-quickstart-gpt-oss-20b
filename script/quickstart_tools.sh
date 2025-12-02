@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-export LC_NUMERIC=C
 
 #==============================================================================
 # quickstart_tools.sh - Shared utilities for AI Quickstart projects
@@ -1284,7 +1283,7 @@ get_gpu_details() {
         IFS=$'\t' read -r id lbl vcpus mem hr mo < <(echo "$type_data" | jq -r '[.id, .label, .vcpus, (.memory/1024|floor), .hourly, .monthly] | @tsv')
 
         local formatted_option
-        printf -v formatted_option "%-20s %-35s ${CYAN}%d vCPUs, %dGB RAM - \$%.2f/hr (\$%.1f/mo)${NC}" "$id" "$lbl" "$vcpus" "$mem" "$hr" "$mo"
+        printf -v formatted_option "%-20s %-35s ${CYAN}%d vCPUs, %dGB RAM - \$%s/hr (\$%s/mo)${NC}" "$id" "$lbl" "$vcpus" "$mem" "$hr" "$mo"
         eval "$display_array_name+=(\"\$formatted_option\")"
 
         idx=$((idx + 1))
