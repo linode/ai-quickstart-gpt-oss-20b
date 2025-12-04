@@ -548,7 +548,7 @@ _check_oauth_dependencies() {
             has_server=true
         fi
     else
-        if command -v nc &> /dev/null && nc -h 2>&1 | grep -q "\-l"; then
+        if command -v nc &> /dev/null; then
             has_server=true
         elif command -v python3 &> /dev/null; then
             has_server=true
@@ -745,6 +745,8 @@ _start_python_server() {
     local port="$1"
     local landing_page="$2"
 
+    print_msg "$CYAN" "Starting Python HTTP server for OAuth callback (port: $port)" >&2
+
     python3 - "$port" "$landing_page" <<'PYTHON_EOF'
 import sys
 import re
@@ -785,6 +787,8 @@ _start_powershell_server() {
         ps_cmd="pwsh.exe"
     fi
 
+    print_msg "$CYAN" "Starting PowerShell HTTP server for OAuth callback (port: $port)" >&2
+
     "$ps_cmd" -Command "
         \$landingPage = '$escaped_page'
         \$listener = New-Object System.Net.HttpListener
@@ -810,37 +814,25 @@ _start_powershell_server() {
 
 # Start server using netcat (Unix/macOS/Linux only)
 _start_nc_server() {
-    local port="$1"
-    local landing_page="$2"
-    local token=""
+    local port="$1" landing_page="$2" token="" request=""
+    [[ "$OSTYPE" == msys || "$OSTYPE" == win32 || "$OSTYPE" == cygwin ]] && return 1
 
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
-        return 1
-    fi
+    print_msg "$CYAN" "Starting netcat server for OAuth callback (port: $port)" >&2
 
-    local fifo="/tmp/linode_oauth_$$"
-    mkfifo "$fifo" || return 1
-    trap "rm -f $fifo" EXIT
+    # Build HTTP response
+    local response
+    response=$(printf "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: ${#landing_page}\r\n\r\n%s" "$landing_page")
 
     while [ -z "$token" ]; do
-        {
-            read -r request_line
-            request_path=$(echo "$request_line" | cut -d' ' -f2)
-            while read -r header; do
-                [ "$header" = $'\r' ] && break
-            done
-            if [[ "$request_path" =~ /token/.*access_token=([^&[:space:]]+) ]]; then
-                token="${BASH_REMATCH[1]}"
-            fi
-            echo -e "HTTP/1.1 200 OK\r"
-            echo -e "Content-Type: text/html\r"
-            echo -e "Content-Length: ${#landing_page}\r"
-            echo -e "\r"
-            echo -e "$landing_page"
-        } < "$fifo" | nc -l -p "$port" > "$fifo" 2>/dev/null || true
-        [ -n "$token" ] && break
+        if [[ "$OSTYPE" == darwin* ]]; then
+            # macOS: pipe response to nc, capture request from stdout
+            request=$(echo -e "$response" | nc -l "$port" 2>/dev/null) || true
+        else
+            # Linux: -q 1 quits 1 sec after EOF
+            request=$(echo -e "$response" | nc -l -p "$port" -q 1 2>/dev/null) || true
+        fi
+        [[ "$request" =~ access_token=([^&[:space:]]+) ]] && token="${BASH_REMATCH[1]}"
     done
-
     echo "$token"
 }
 
@@ -866,7 +858,8 @@ _start_oauth_server() {
             return 1
         fi
     else
-        if command -v nc &> /dev/null && nc -h 2>&1 | grep -q "\-l"; then
+        # Prefer nc (lightweight), fallback to Python
+        if command -v nc &> /dev/null; then
             _start_nc_server "$port" "$landing_page"
         elif command -v python3 &> /dev/null; then
             _start_python_server "$port" "$landing_page"
@@ -1340,6 +1333,94 @@ delete_instance() {
     local instance_id="$2"
 
     linode_api_call "/linode/instances/${instance_id}" "$token" "DELETE"
+}
+
+
+# Create a Block Storage Volume
+# Usage: create_volume <token> <label> <region> [size] [linode_id] [config_id] [encryption] [tags]
+# Parameters:
+#   token      - Linode API token (required)
+#   label      - Volume name, 1-32 chars, alphanumeric/hyphens/underscores (required)
+#   region     - Region ID (required if linode_id not provided)
+#   size       - Size in GB, defaults to 20
+#   linode_id  - Linode ID to attach volume to (optional)
+#   config_id  - Config profile ID for attachment (optional, requires linode_id)
+#   encryption - "enabled" or "disabled", defaults to "disabled"
+#   tags       - Comma-separated list of tags (optional)
+# Returns: JSON response from API
+# Example:
+#   create_volume "$TOKEN" "my-volume" "us-iad" 100
+#   create_volume "$TOKEN" "my-volume" "" 50 12345
+create_volume() {
+    local token="$1"
+    local label="$2"
+    local region="${3:-}"
+    local size="${4:-20}"
+    local linode_id="${5:-}"
+    local config_id="${6:-}"
+    local encryption="${7:-disabled}"
+    local tags="${8:-}"
+
+    # Validate required parameters
+    if [ -z "$token" ]; then
+        echo -e "${RED}Error: token is required${NC}" >&2
+        return 1
+    fi
+
+    if [ -z "$label" ]; then
+        echo -e "${RED}Error: label is required${NC}" >&2
+        return 1
+    fi
+
+    # Validate label format (1-32 chars, alphanumeric, hyphens, underscores)
+    if [[ ! "$label" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$ ]]; then
+        echo -e "${RED}Error: label must be 1-32 characters, alphanumeric with hyphens/underscores${NC}" >&2
+        return 1
+    fi
+
+    # Either region or linode_id must be provided
+    if [ -z "$region" ] && [ -z "$linode_id" ]; then
+        echo -e "${RED}Error: region is required when linode_id is not provided${NC}" >&2
+        return 1
+    fi
+
+    # config_id requires linode_id
+    if [ -n "$config_id" ] && [ -z "$linode_id" ]; then
+        echo -e "${RED}Error: config_id requires linode_id${NC}" >&2
+        return 1
+    fi
+
+    # Build JSON payload
+    local payload
+    payload=$(jq -n \
+        --arg label "$label" \
+        --arg size "$size" \
+        --arg encryption "$encryption" \
+        '{
+            label: $label,
+            size: ($size | tonumber),
+            encryption: $encryption
+        }')
+
+    # Add optional fields
+    if [ -n "$region" ]; then
+        payload=$(echo "$payload" | jq --arg region "$region" '. + {region: $region}')
+    fi
+
+    if [ -n "$linode_id" ]; then
+        payload=$(echo "$payload" | jq --arg linode_id "$linode_id" '. + {linode_id: ($linode_id | tonumber)}')
+    fi
+
+    if [ -n "$config_id" ]; then
+        payload=$(echo "$payload" | jq --arg config_id "$config_id" '. + {config_id: ($config_id | tonumber)}')
+    fi
+
+    if [ -n "$tags" ]; then
+        # Convert comma-separated tags to JSON array
+        payload=$(echo "$payload" | jq --arg tags "$tags" '. + {tags: ($tags | split(",") | map(gsub("^\\s+|\\s+$"; "")))}')
+    fi
+
+    linode_api_call "/volumes" "$token" "POST" "$payload"
 }
 
 #==============================================================================

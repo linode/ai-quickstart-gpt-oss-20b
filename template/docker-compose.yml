@@ -16,7 +16,7 @@ services:
       - --kv-cache-dtype=fp8
       - --gpu-memory-utilization=0.9
       - --max-model-len=16384
-      - --max-num-seqs=8
+      - --max-num-seqs=4
       - --enable-prompt-tokens-details
 
     healthcheck:
