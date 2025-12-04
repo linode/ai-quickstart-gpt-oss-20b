@@ -699,9 +699,16 @@ _create_landing_page() {
         <p class="hint">Press Enter or Esc to close now</p>
     </div>
     <script>
-        var r = new XMLHttpRequest();
-        r.open('GET', 'http://localhost:PORT/token/' + window.location.hash.substr(1));
-        r.send();
+        function sendToken(retries) {
+            var r = new XMLHttpRequest();
+            r.open('GET', 'http://localhost:PORT/token/' + window.location.hash.substr(1));
+            r.timeout = 2000;
+            r.onerror = r.ontimeout = function() {
+                if (retries > 0) setTimeout(function() { sendToken(retries - 1); }, 300);
+            };
+            r.send();
+        }
+        sendToken(10);
         var secondsLeft = 5;
         var countdownElement = document.getElementById('countdown');
         function updateCountdown() {
@@ -819,16 +826,16 @@ _start_nc_server() {
 
     print_msg "$CYAN" "Starting netcat server for OAuth callback (port: $port)" >&2
 
-    # Build HTTP response
+    # Build HTTP response (serve landing page for all requests)
     local response
     response=$(printf "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\nContent-Length: ${#landing_page}\r\n\r\n%s" "$landing_page")
 
+    # OAuth flow: loop until we receive token via XHR callback
+    # JavaScript in landing page retries if connection fails
     while [ -z "$token" ]; do
         if [[ "$OSTYPE" == darwin* ]]; then
-            # macOS: pipe response to nc, capture request from stdout
             request=$(echo -e "$response" | nc -l "$port" 2>/dev/null) || true
         else
-            # Linux: -q 1 quits 1 sec after EOF
             request=$(echo -e "$response" | nc -l -p "$port" -q 1 2>/dev/null) || true
         fi
         [[ "$request" =~ access_token=([^&[:space:]]+) ]] && token="${BASH_REMATCH[1]}"
