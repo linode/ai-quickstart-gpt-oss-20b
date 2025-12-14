@@ -54,10 +54,11 @@ That's it! The script will download required files and guide you through the int
 - Systemd service for automatic startup on reboot
 
 ### Docker container
-| | Service | Description | 
+| | Service | Description |
 |:--:|:--|:--|
+| <img src="https://caddyserver.com/resources/images/favicon.png" alt="Caddy" width="32"/> | **Caddy** | Reverse proxy with automatic HTTPS (port 80/443) |
 | <img src="https://raw.githubusercontent.com/vllm-project/media-kit/main/vLLM-Logo.png" alt="vLLM" width="32"/> | **vLLM** | High-throughput LLM inference engine with OpenAI-compatible API (port 8000) |
-| <img src="https://raw.githubusercontent.com/open-webui/open-webui/main/static/favicon.png" alt="Open-WebUI" width="32"/> | **Open-WebUI** | Feature-rich web interface for AI chat interactions (port 3000) |
+| <img src="https://raw.githubusercontent.com/open-webui/open-webui/main/static/favicon.png" alt="Open-WebUI" width="32"/> | **Open-WebUI** | Feature-rich web interface for AI chat interactions (port 8080) |
 
 -----------------------------------------
 
@@ -130,7 +131,7 @@ Once complete, you'll see:
 ✅ Your AI LLM instance is now running!
 
 🌐 Access URLs:
-   Open-WebUI:  http://<instance-ip>:3000
+   Open-WebUI:  https://<ip-label>.ip.linodeusercontent.com
 
 🔐 Access Credentials:
    SSH:   ssh -i /path/to/your/key root@<instance-ip>
@@ -141,8 +142,11 @@ Once complete, you'll see:
    # Install script called by cloud-init service
    /opt/ai-quickstart-gpt-oss-20b/install.sh
 
-   # docker compose file calle by systemctl at startup
+   # docker compose file called by systemctl at startup
    /opt/ai-quickstart-gpt-oss-20b/docker-compose.yml
+
+   # Caddy reverse proxy configuration
+   /opt/ai-quickstart-gpt-oss-20b/Caddyfile
 
    # service definition
    /etc/systemd/system/ai-quickstart-gpt-oss-20b.service
@@ -178,19 +182,20 @@ ai-quickstart-gpt-oss-20b/
 └── template/
     ├── cloud-init.yaml          # Cloud-init configuration
     ├── docker-compose.yml       # Docker Compose configuration
+    ├── Caddyfile                # Caddy reverse proxy configuration
     └── install.sh               # Post-boot installation script
 ```
 
 -----------------------------------------
 ## 🔒 Security
 
-**⚠️ IMPORTANT**: By default, ports 3000 are exposed to the internet
+**⚠️ IMPORTANT**: By default, ports 80 and 443 are exposed to the internet
 
 ### Immediate Security Steps
 
 1. **Configure Cloud Firewall** (Recommended)
    - Create Linode Cloud Firewall
-   - Restrict access to ports 3000 by source IP
+   - Restrict access to ports 80/443 by source IP
    - Allow SSH (port 22) from trusted IPs only
 
 2. **SSH Security**
@@ -229,7 +234,7 @@ nvidia-smi
 curl http://localhost:8000/v1/models
 
 # Check Open-WebUI health
-curl http://localhost:3000/health
+curl http://localhost:8080/health
 
 # Check vLLM container logs
 docker logs vllm

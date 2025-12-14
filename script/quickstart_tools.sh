@@ -1058,12 +1058,12 @@ extract_oauth_token() {
         echo -e "${GREEN}✅ Authentication Successful${NC}" >&2
         echo -e "${GREEN}========================================${NC}" >&2
         echo "" >&2
-        echo -e "${YELLOW}⚠️  IMPORTANT:${NC}" >&2
-        echo "  • This short term token expires in 2 hours" >&2
-        echo "  • Token is NOT saved to disk & used only for this setup script" >&2
-        echo "" >&2
-        echo "User:$username" >&2
-        echo "Token:$token" >&2
+        #echo -e "${YELLOW}⚠️  IMPORTANT:${NC}" >&2
+        #echo "  • This short term token expires in 2 hours" >&2
+        #echo "  • Token is NOT saved to disk & used only for this setup script" >&2
+        #echo "" >&2
+        #echo "User:$username" >&2
+        #echo "Token:$token" >&2
     fi
 
     echo "$token"
