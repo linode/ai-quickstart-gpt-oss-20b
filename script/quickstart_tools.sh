@@ -1297,7 +1297,9 @@ get_gpu_details() {
 }
 
 # Create a Linode instance with cloud-init
-# Usage: create_instance <token> <label> <region> <type> <image> <root_pass> <ssh_key> <user_data_base64>
+# Usage: create_instance <token> <label> <region> <type> <image> <root_pass> <ssh_key> <user_data_base64> [tags]
+# Parameters:
+#   tags - Optional: JSON array string like '["tag1","tag2"]', defaults to []
 # Returns: JSON response from API
 create_instance() {
     local token="$1"
@@ -1308,6 +1310,7 @@ create_instance() {
     local root_pass="$6"
     local ssh_key="$7"
     local user_data_base64="$8"
+    local tags="${9:-[]}"
 
     local payload
     payload=$(jq -n \
@@ -1318,6 +1321,7 @@ create_instance() {
         --arg pass "$root_pass" \
         --arg userdata "$user_data_base64" \
         --arg sshkey "$ssh_key" \
+        --argjson tags "$tags" \
         '{
             label: $label,
             region: $region,
@@ -1326,6 +1330,7 @@ create_instance() {
             root_pass: $pass,
             metadata: {user_data: $userdata},
             authorized_keys: [$sshkey],
+            tags: $tags,
             booted: true,
             backups_enabled: false,
             private_ip: false
