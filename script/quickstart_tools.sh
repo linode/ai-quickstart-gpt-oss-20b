@@ -111,6 +111,12 @@ print_msg() {
     echo -e "${color}$*${NC}"
 }
 
+msg() {
+    local color="$1"
+    shift
+    echo -e "${color}$*${NC}"
+}
+
 # Print progress message (overwrites current line)
 # Usage: progress <color> <message>
 progress() {
