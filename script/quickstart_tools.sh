@@ -45,8 +45,11 @@ readonly OAUTH_LOGIN_URL="https://login.linode.com/oauth/authorize"
 # SECTION 2: Embedded Assets (Logo)
 #==============================================================================
 
-# Return Akamai ASCII logo with left-to-right gradient (color changes between letters)
-get_akamai_logo() {
+# Show Akamai banner
+# Usage: show_banner
+show_banner() {
+    clear
+
     # Gradient colors from left to right (optimized for both dark and light backgrounds)
     local C1='\033[38;2;0;145;200m'    # #0091c8 - darker cyan
     local C2='\033[38;2;0;155;210m'    # #009bd2
@@ -54,6 +57,7 @@ get_akamai_logo() {
     local C4='\033[38;2;0;176;230m'    # #00b0e6
     local C5='\033[38;2;20;186;235m'   # #14baeb
     local C6='\033[38;2;40;196;240m'   # #28c4f0 - lighter cyan
+
     echo -e "
  ${C1} █████╗ ${C1} ██╗  ██╗${C1}  █████╗ ${C2} ███╗   ███╗${C3}  █████╗ ${C4} ██╗
  ${C1}██╔══██╗${C1} ██║ ██╔╝${C1} ██╔══██╗${C2} ████╗ ████║${C3} ██╔══██╗${C4} ██║
@@ -76,13 +80,7 @@ get_akamai_logo() {
  ${C1}╚██████╗${C2} ███████╗${C3} ╚██████╔╝${C4} ╚██████╔╝${C5} ██████╔╝
  ${C1} ╚═════╝${C2} ╚══════╝${C3}  ╚═════╝ ${C4}  ╚═════╝ ${C5} ╚═════╝
 ${NC}"
-}
 
-# Show Akamai banner
-# Usage: show_banner
-show_banner() {
-    clear
-    get_akamai_logo
     echo ""
 }
 
@@ -104,17 +102,16 @@ log_to_file() {
 }
 
 # Print colored message
-# Usage: print_msg <color> <message>
-print_msg() {
+# Usage: msg <color> <message>
+msg() {
     local color="$1"
     shift
     echo -e "${color}$*${NC}"
 }
 
-msg() {
-    local color="$1"
-    shift
-    echo -e "${color}$*${NC}"
+# Alias for backward compatibility (used by deploy.sh, delete.sh)
+print_msg() {
+    msg "$@"
 }
 
 # Print progress message (overwrites current line)
@@ -142,7 +139,7 @@ scroll_up() {
 # Usage: error_exit <message>
 error_exit() {
     local message="$1"
-    print_msg "$RED" "❌ ERROR: $message"
+    msg "$RED" "❌ ERROR: $message"
     log_to_file "ERROR" "$message"
     exit 1
 }
@@ -150,26 +147,26 @@ error_exit() {
 # Print success message
 # Usage: success <message>
 success() {
-    print_msg "$GREEN" "✅ $*"
+    msg "$GREEN" "✅ $*"
 }
 
 # Print info message
 # Usage: info <message>
 info() {
-    print_msg "$CYAN" "ℹ️  $*"
+    msg "$CYAN" "ℹ️  $*"
 }
 
 # Print warning message
 # Usage: warn <message>
 warn() {
-    print_msg "$YELLOW" "⚠️  $*"
+    msg "$YELLOW" "⚠️  $*"
 }
 
 # Print step header
 # Usage: show_step <message>
 show_step() {
     echo "------------------------------------------------------"
-    print_msg "$BOLD" "$*"
+    msg "$BOLD" "$*"
     echo "------------------------------------------------------"
     echo ""
 }
@@ -178,22 +175,9 @@ show_step() {
 # SECTION 4: Utility Functions (Public)
 #==============================================================================
 
-# Cross-platform command detection
-# Usage: check_command <command>
-# Returns: 0 if found, 1 if not found
-check_command() {
-    local cmd="$1"
-    if type -p "$cmd" &> /dev/null || type -p "${cmd}.exe" &> /dev/null || \
-       which "$cmd" &> /dev/null || which "${cmd}.exe" &> /dev/null || \
-       command -v "$cmd" &> /dev/null || command -v "${cmd}.exe" &> /dev/null; then
-        return 0
-    fi
-    return 1
-}
-
 # Ensure jq is available (auto-install if missing)
 ensure_jq() {
-    check_command jq && jq --version &>/dev/null && return 0
+    command -v jq &>/dev/null && jq --version &>/dev/null && return 0
     echo "jq not found. Attempting to install..." >&2
     local jq_base="https://github.com/jqlang/jq/releases/download/jq-1.8.1"
 
@@ -237,14 +221,14 @@ ask_selection() {
 
     # Validate that array is not empty
     if [ "$array_length" -eq 0 ]; then
-        echo -e "${RED}Error: Options array is empty${NC}" >&2
+        msg "$RED" "Error: Options array is empty" >&2
         return 1
     fi
 
     # Validate default index
     if [ -n "$default_index" ] && [ "$default_index" != "0" ]; then
         if ! [[ "$default_index" =~ ^[0-9]+$ ]] || [ "$default_index" -lt 1 ] || [ "$default_index" -gt "$array_length" ]; then
-            echo -e "${RED}Error: Invalid default index: $default_index (must be 1-${array_length})${NC}" >&2
+            msg "$RED" "Error: Invalid default index: $default_index (must be 1-${array_length})" >&2
             return 1
         fi
     else
@@ -287,7 +271,7 @@ ask_selection() {
 
         # Validate input is a number in range
         if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "$array_length" ]; then
-            echo -e "${RED}Please enter a number between 1 and ${array_length}.${NC}" >&2
+            msg "$RED" "Please enter a number between 1 and ${array_length}." >&2
             continue
         fi
 
@@ -343,7 +327,7 @@ ask_input() {
         if "$validation_func" "$user_input" > /dev/null 2>&1; then
             break
         else
-            print_msg "$RED" "$error_msg"
+            msg "$RED" "$error_msg"
         fi
     done
 
@@ -412,127 +396,14 @@ ask_password() {
 # Authentication helpers
 #------------------------------------------------------------------------------
 
-# Find linode-cli executable
-_find_linode_cli() {
-    # Check if in PATH
-    if command -v linode-cli &> /dev/null; then
-        command -v linode-cli
-        return 0
-    fi
-
-    # Check common installation locations
-    local locations=(
-        "$HOME/.local/bin/linode-cli"
-        "/usr/local/bin/linode-cli"
-        "/usr/bin/linode-cli"
-    )
-
-    # Add Windows-specific locations
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
-        if [ -n "${APPDATA:-}" ]; then
-            locations+=("$APPDATA/Python/Python311/Scripts/linode-cli.exe")
-            locations+=("$APPDATA/Python/Python312/Scripts/linode-cli.exe")
-            locations+=("$APPDATA/Python/Python313/Scripts/linode-cli.exe")
-        fi
-        if [ -n "${LOCALAPPDATA:-}" ]; then
-            locations+=("$LOCALAPPDATA/Programs/Python/Python311/Scripts/linode-cli.exe")
-            locations+=("$LOCALAPPDATA/Programs/Python/Python312/Scripts/linode-cli.exe")
-            locations+=("$LOCALAPPDATA/Programs/Python/Python313/Scripts/linode-cli.exe")
-        fi
-        locations+=("/c/Python311/Scripts/linode-cli.exe")
-        locations+=("/c/Python312/Scripts/linode-cli.exe")
-        locations+=("/c/Python313/Scripts/linode-cli.exe")
-    fi
-
-    for loc in "${locations[@]}"; do
-        if [ -x "$loc" ]; then
-            echo "$loc"
-            return 0
-        fi
-    done
-
-    # Last resort: try via python -m
-    if command -v python3 &> /dev/null; then
-        if python3 -m linodecli --version &> /dev/null; then
-            echo "python3 -m linodecli"
-            return 0
-        fi
-    fi
-
-    if command -v python &> /dev/null; then
-        if python -m linodecli --version &> /dev/null; then
-            echo "python -m linodecli"
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
 # Find linode-cli config file
 _find_config_file() {
-    # Priority 1: Custom config path from environment
-    if [ -n "${LINODE_CLI_CONFIG:-}" ]; then
-        echo "$LINODE_CLI_CONFIG"
-        return
-    fi
-
-    # Priority 2: Legacy location
-    if [ -f "$HOME/.linode-cli" ]; then
-        echo "$HOME/.linode-cli"
-        return
-    fi
-
-    # Priority 3: Platform-specific config location
-    if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
-        local win_config="${USERPROFILE:-$HOME}/.config/linode-cli"
-        if [ -f "$win_config" ]; then
-            echo "$win_config"
-            return
-        fi
-        echo "$win_config"
-        return
-    fi
-
-    # Priority 4: XDG config location
-    local xdg_config="${XDG_CONFIG_HOME:-$HOME/.config}"
-    if [ -f "$xdg_config/linode-cli" ]; then
-        echo "$xdg_config/linode-cli"
-        return
-    fi
-
-    echo "$xdg_config/linode-cli"
+    echo "${LINODE_CLI_CONFIG:-$([ -f "$HOME/.linode-cli" ] && echo "$HOME/.linode-cli" || echo "${XDG_CONFIG_HOME:-$HOME/.config}/linode-cli")}"
 }
 
 # Parse INI file value
 _get_ini_value() {
-    local file="$1"
-    local section="$2"
-    local key="$3"
-
-    awk -F '=' -v section="[$section]" -v key="$key" '
-        $0 == section { in_section=1; next }
-        /^\[/ { in_section=0 }
-        in_section {
-            gsub(/^[ \t]+|[ \t]+$/, "", $1)
-            if ($1 == key) {
-                gsub(/^[ \t]+|[ \t]+$/, "", $2)
-                print $2
-                exit
-            }
-        }
-    ' "$file"
-}
-
-# Run linode-cli (handles both direct executable and python -m)
-_run_linode_cli() {
-    local linode_cli="$1"
-    shift
-    if [[ "$linode_cli" == *"python"* ]]; then
-        $linode_cli "$@"
-    else
-        "$linode_cli" "$@"
-    fi
+    awk -F '=' -v s="[$2]" -v k="$3" '$0==s{f=1;next}/^\[/{f=0}f&&$1~"^[ \t]*"k"[ \t]*$"{gsub(/^[ \t]+|[ \t]+$/,"",$2);print $2;exit}' "$1"
 }
 
 #------------------------------------------------------------------------------
@@ -571,44 +442,10 @@ _check_oauth_dependencies() {
     fi
 
     if [ ${#missing[@]} -gt 0 ]; then
-        echo -e "${RED}❌ Missing dependencies: ${missing[*]}${NC}" >&2
+        msg "$RED" "❌ Missing dependencies: ${missing[*]}" >&2
         return 1
     fi
     return 0
-}
-
-# Parse JSON (prefer jq, fallback to grep/sed)
-_parse_json() {
-    local json="$1"
-    local key="$2"
-
-    if command -v jq &> /dev/null; then
-        echo "$json" | jq -r ".${key} // empty"
-    else
-        echo "$json" | grep -o "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | sed 's/.*:.*"\(.*\)".*/\1/'
-    fi
-}
-
-# Validate token against API
-_validate_token() {
-    local token="$1"
-    local response
-    local http_code
-
-    response=$(curl -s -w "\n%{http_code}" \
-        -H "Authorization: Bearer $token" \
-        "${API_BASE}/profile" 2>&1)
-
-    http_code=$(echo "$response" | tail -n1)
-    local body
-    body=$(echo "$response" | sed '$d')
-
-    if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
-        _parse_json "$body" "username"
-        return 0
-    else
-        return 1
-    fi
 }
 
 # Open URL in browser (cross-platform)
@@ -759,7 +596,7 @@ _start_python_server() {
     local port="$1"
     local landing_page="$2"
 
-    print_msg "$CYAN" "Starting Python HTTP server for OAuth callback (port: $port)" >&2
+    msg "$CYAN" "Starting Python HTTP server for OAuth callback (port: $port)" >&2
 
     python3 - "$port" "$landing_page" <<'PYTHON_EOF'
 import sys
@@ -801,7 +638,7 @@ _start_powershell_server() {
         ps_cmd="pwsh.exe"
     fi
 
-    print_msg "$CYAN" "Starting PowerShell HTTP server for OAuth callback (port: $port)" >&2
+    msg "$CYAN" "Starting PowerShell HTTP server for OAuth callback (port: $port)" >&2
 
     "$ps_cmd" -Command "
         \$landingPage = '$escaped_page'
@@ -831,7 +668,7 @@ _start_nc_server() {
     local port="$1" landing_page="$2" token="" request=""
     [[ "$OSTYPE" == msys || "$OSTYPE" == win32 || "$OSTYPE" == cygwin ]] && return 1
 
-    print_msg "$CYAN" "Starting netcat server for OAuth callback (port: $port)" >&2
+    msg "$CYAN" "Starting netcat server for OAuth callback (port: $port)" >&2
 
     # Build HTTP response (serve landing page for all requests)
     local response
@@ -857,7 +694,7 @@ _start_oauth_server() {
     local oauth_url="$3"
 
     landing_page="${landing_page//PORT/$port}"
-    _open_browser "$oauth_url" || echo -e "${YELLOW}Please open the URL manually${NC}" >&2
+    _open_browser "$oauth_url" || warn "Please open the URL manually" >&2
 
     if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
         if type -p powershell.exe &> /dev/null || type -p pwsh.exe &> /dev/null || \
@@ -868,7 +705,7 @@ _start_oauth_server() {
              which python3 &> /dev/null || which python.exe &> /dev/null; then
             _start_python_server "$port" "$landing_page"
         else
-            echo -e "${RED}Neither PowerShell nor Python 3 is available${NC}" >&2
+            msg "$RED" "Neither PowerShell nor Python 3 is available" >&2
             return 1
         fi
     else
@@ -878,7 +715,7 @@ _start_oauth_server() {
         elif command -v python3 &> /dev/null; then
             _start_python_server "$port" "$landing_page"
         else
-            echo -e "${RED}Neither netcat nor Python 3 is available${NC}" >&2
+            msg "$RED" "Neither netcat nor Python 3 is available" >&2
             return 1
         fi
     fi
@@ -891,112 +728,67 @@ _start_oauth_server() {
 # Get Linode API token (env → linode-cli → OAuth)
 # Usage: get_linode_token [silent]
 # Returns: Token string on stdout
+# Sets: LINODE_PROFILE_USERNAME, LINODE_PROFILE_EMAIL (exported)
 get_linode_token() {
     local silent="${1:-false}"
+    local token profile token_source
 
     # Check environment variable first
     if [ -n "${LINODE_TOKEN:-}" ]; then
-        echo "$LINODE_TOKEN"
-        return 0
-    fi
-
+        token="$LINODE_TOKEN"
+        token_source="environment variable"
     # Try to get token from linode-cli config (silent, no messages)
-    local token
-    token=$(extract_linodecli_token true 2>/dev/null || true)
-    if [ -n "$token" ]; then
-        echo "$token"
-        return 0
-    fi
-
+    elif token=$(extract_linodecli_token true 2>/dev/null || true); [ -n "$token" ]; then
+        token_source="linode-cli config"
     # Fallback to OAuth (allow messages to stderr based on silent flag)
-    token=$(extract_oauth_token "$silent" || true)
-    if [ -n "$token" ]; then
-        echo "$token"
-        return 0
+    elif token=$(extract_oauth_token "$silent" || true); [ -n "$token" ]; then
+        token_source="OAuth"
+    else
+        return 1
     fi
 
-    return 1
+    # Validate token and set globals
+    profile=$(get_profile "$token") || return 1
+    LINODE_PROFILE_USERNAME=$(echo "$profile" | jq -r ".username // empty")
+    LINODE_PROFILE_EMAIL=$(echo "$profile" | jq -r ".email // empty")
+    export LINODE_PROFILE_USERNAME LINODE_PROFILE_EMAIL
+    [ -n "$LINODE_PROFILE_USERNAME" ] || return 1
+
+    # Show success message
+    if [ "$silent" = false ]; then
+        echo "" >&2
+        msg "$GREEN" "========================================" >&2
+        msg "$GREEN" "Authentication Successful" >&2
+        msg "$GREEN" "========================================" >&2
+        echo "" >&2
+        msg "$CYAN" "Token source: ${token_source}" >&2
+        msg "$CYAN" "Username: ${LINODE_PROFILE_USERNAME}" >&2
+        echo "" >&2
+    fi
+
+    echo "$token"
 }
 
-# Extract token from linode-cli configuration
-# Usage: extract_linodecli_token [silent]
-# Returns: Token string on stdout
+# Extract and validate token from linode-cli configuration or environment
+# Returns: Token string on stdout, exits 1 on error
 extract_linodecli_token() {
-    local silent="${1:-false}"
+    # Priority 1: Environment variable
+    local token="${LINODE_CLI_TOKEN:-}"
 
-    # Find linode-cli executable
-    local linode_cli
-    linode_cli=$(_find_linode_cli) || {
-        if [ "$silent" = false ]; then
-            echo "❌ linode-cli is not installed" >&2
-        fi
-        return 1
-    }
-
-    if [ "$silent" = false ]; then
-        local version
-        version=$(_run_linode_cli "$linode_cli" --version 2>&1 | head -n 1 | awk '{print $2}')
-        echo "✅ linode-cli is installed ( ver: $version  path: $linode_cli )"
-    fi
-
-    # Check config file
-    local config_file
-    config_file=$(_find_config_file)
-    if [ ! -f "$config_file" ]; then
-        if [ "$silent" = false ]; then
-            echo "❌ linode-cli is not configured (config file not found: $config_file)" >&2
-        fi
-        return 1
-    fi
-
-    # Verify configuration
-    if ! timeout 5 _run_linode_cli "$linode_cli" profile view &> /dev/null; then
-        if [ "$silent" = false ]; then
-            echo "❌ linode-cli configuration is invalid or incomplete" >&2
-        fi
-        return 1
-    fi
-
-    # Check environment variable
-    if [ -n "${LINODE_CLI_TOKEN:-}" ]; then
-        if [ "$silent" = false ]; then
-            echo "✅ linode-cli is configured"
-            echo "Token:${LINODE_CLI_TOKEN}"
-        else
-            echo "${LINODE_CLI_TOKEN}"
-        fi
-        return 0
-    fi
-
-    # Get default user
-    local username
-    username=$(_get_ini_value "$config_file" "DEFAULT" "default-user")
-    if [ -z "$username" ]; then
-        if [ "$silent" = false ]; then
-            echo "❌ No default user found in config" >&2
-        fi
-        return 1
-    fi
-
-    if [ "$silent" = false ]; then
-        echo "✅ linode-cli is configured ( user : $username )"
-    fi
-
-    # Extract token
-    local token
-    token=$(_get_ini_value "$config_file" "$username" "token")
+    # Priority 2: Config file
     if [ -z "$token" ]; then
-        if [ "$silent" = false ]; then
-            echo "❌ No token found for user '$username'" >&2
-        fi
-        return 1
+        local config="$(_find_config_file)"
+        [ -f "$config" ] || return 1
+        local user="$(_get_ini_value "$config" "DEFAULT" "default-user")"
+        [ -n "$user" ] || return 1
+        token="$(_get_ini_value "$config" "$user" "token")"
+        [ -n "$token" ] || return 1
     fi
 
-    if [ "$silent" = false ]; then
-        echo "Token:${token}"
-    else
-        echo "${token}"
-    fi
+    # Validate token via API
+    get_profile "$token" >/dev/null || return 1
+
+    echo "$token"
 }
 
 # Extract token via OAuth flow
@@ -1014,7 +806,7 @@ extract_oauth_token() {
     local port
     port=$(_find_available_port)
     if [ -z "$port" ]; then
-        echo -e "${RED}Could not find an available port${NC}" >&2
+        msg "$RED" "Could not find an available port" >&2
         return 1
     fi
 
@@ -1024,52 +816,40 @@ extract_oauth_token() {
 
     if [ "$silent" = false ]; then
         echo "" >&2
-        echo -e "${GREEN}Opening browser. Please login with your Linode credential.${NC}" >&2
+        success "Opening browser. Please login with your Linode credential." >&2
         echo "" >&2
         sleep 3
-        echo -e "If the browser doesn't open automatically, visit:" >&2
+        echo "If the browser doesn't open automatically, visit:" >&2
         echo "" >&2
         echo "$oauth_url" >&2
         echo "" >&2
-        echo -e "Waiting for OAuth callback..." >&2
+        echo "Waiting for OAuth callback..." >&2
     fi
 
     local token
     token=$(_start_oauth_server "$port" "$landing_page" "$oauth_url")
 
     if [ -z "$token" ]; then
-        echo -e "${RED}Failed to receive OAuth token${NC}" >&2
+        msg "$RED" "Failed to receive OAuth token" >&2
         return 1
     fi
 
     if [ "$silent" = false ]; then
-        echo -e "OAuth callback received" >&2
-        echo -e "Validating token..." >&2
+        echo "OAuth callback received" >&2
+        echo "Validating token..." >&2
     fi
 
-    local username
-    if ! username=$(_validate_token "$token"); then
-        echo -e "${RED}Token validation failed${NC}" >&2
+    # Validate token
+    local profile username
+    profile=$(get_profile "$token") || {
+        msg "$RED" "Token validation failed" >&2
         return 1
-    fi
+    }
 
+    username=$(echo "$profile" | jq -r ".username // empty")
     if [ -z "$username" ]; then
-        echo -e "${RED}Could not get username${NC}" >&2
+        msg "$RED" "Could not get username" >&2
         return 1
-    fi
-
-    if [ "$silent" = false ]; then
-        echo "" >&2
-        echo -e "${GREEN}========================================${NC}" >&2
-        echo -e "${GREEN}✅ Authentication Successful${NC}" >&2
-        echo -e "${GREEN}========================================${NC}" >&2
-        echo "" >&2
-        #echo -e "${YELLOW}⚠️  IMPORTANT:${NC}" >&2
-        #echo "  • This short term token expires in 2 hours" >&2
-        #echo "  • Token is NOT saved to disk & used only for this setup script" >&2
-        #echo "" >&2
-        #echo "User:$username" >&2
-        #echo "Token:$token" >&2
     fi
 
     echo "$token"
@@ -1101,6 +881,24 @@ linode_api_call() {
     curl "${curl_args[@]}" "${API_BASE}${endpoint}"
 }
 
+# Get user profile information
+# Usage: get_profile <token>
+# Returns: JSON profile data
+# Sets: LINODE_PROFILE_USERNAME, LINODE_PROFILE_EMAIL (global exported variables)
+get_profile() {
+    local token="$1"
+    local response
+
+    response=$(linode_api_call "/profile" "$token")
+
+    # Validate response
+    if ! echo "$response" | jq -e ".username" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    echo "$response"
+}
+
 # Get GPU availability data (returns JSON)
 # Usage: get_gpu_availability [token]
 # If token not provided, will attempt to get one
@@ -1109,7 +907,7 @@ get_gpu_availability() {
 
     if [ -z "$token" ]; then
         token=$(get_linode_token true) || {
-            echo -e "${RED}❌ Failed to get API token${NC}" >&2
+            msg "$RED" "❌ Failed to get API token" >&2
             return 1
         }
     fi
@@ -1127,14 +925,14 @@ get_gpu_availability() {
     # Verify temp files
     for file in "${temp_dir}/avail_page_"{1,2,3,4}".json" "${temp_dir}/types.json" "${temp_dir}/regions.json"; do
         if [ ! -f "$file" ]; then
-            echo -e "${RED}❌ Failed to fetch data from API${NC}" >&2
+            msg "$RED" "❌ Failed to fetch data from API" >&2
             return 1
         fi
     done
 
     # Combine availability pages into temp file (avoids "Argument list too long" on Git Bash/Windows)
     jq -n -c '{data: [inputs.data[]] | unique}' "${temp_dir}/avail_page_"{1,2,3,4}".json" > "${temp_dir}/availability.json" || {
-        echo -e "${RED}❌ Failed to process availability data${NC}" >&2
+        msg "$RED" "❌ Failed to process availability data" >&2
         return 1
     }
 
@@ -1164,7 +962,7 @@ get_gpu_availability() {
 
     if [ "$rtx4000_types" = "[]" ]; then
         rm -f "${temp_dir}/avail_page_"{1,2,3,4}".json" "${temp_dir}/types.json" "${temp_dir}/regions.json" "${temp_dir}/availability.json" "${temp_dir}/rtx4000_types.json"
-        echo -e "${RED}❌ No RTX4000 instances found${NC}" >&2
+        msg "$RED" "❌ No RTX4000 instances found" >&2
         return 1
     fi
 
@@ -1209,12 +1007,12 @@ get_available_regions() {
     local data_array_name="$3"
 
     if [ -z "$gpu_data" ]; then
-        echo -e "${RED}Error: GPU data is required${NC}" >&2
+        msg "$RED" "Error: GPU data is required" >&2
         return 1
     fi
 
     if [ -z "$display_array_name" ] || [ -z "$data_array_name" ]; then
-        echo -e "${RED}Error: display_array_name and data_array_name are required${NC}" >&2
+        msg "$RED" "Error: display_array_name and data_array_name are required" >&2
         return 1
     fi
 
@@ -1258,12 +1056,12 @@ get_gpu_details() {
     local default_index_var="$6"
 
     if [ -z "$gpu_data" ]; then
-        echo -e "${RED}Error: GPU data is required${NC}" >&2
+        msg "$RED" "Error: GPU data is required" >&2
         return 1
     fi
 
     if [ -z "$display_array_name" ] || [ -z "$data_array_name" ] || [ -z "$default_index_var" ]; then
-        echo -e "${RED}Error: display_array_name, data_array_name, and default_index_var are required${NC}" >&2
+        msg "$RED" "Error: display_array_name, data_array_name, and default_index_var are required" >&2
         return 1
     fi
 
@@ -1382,30 +1180,30 @@ create_volume() {
 
     # Validate required parameters
     if [ -z "$token" ]; then
-        echo -e "${RED}Error: token is required${NC}" >&2
+        msg "$RED" "Error: token is required" >&2
         return 1
     fi
 
     if [ -z "$label" ]; then
-        echo -e "${RED}Error: label is required${NC}" >&2
+        msg "$RED" "Error: label is required" >&2
         return 1
     fi
 
     # Validate label format (1-32 chars, alphanumeric, hyphens, underscores)
     if [[ ! "$label" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$ ]]; then
-        echo -e "${RED}Error: label must be 1-32 characters, alphanumeric with hyphens/underscores${NC}" >&2
+        msg "$RED" "Error: label must be 1-32 characters, alphanumeric with hyphens/underscores" >&2
         return 1
     fi
 
     # Either region or linode_id must be provided
     if [ -z "$region" ] && [ -z "$linode_id" ]; then
-        echo -e "${RED}Error: region is required when linode_id is not provided${NC}" >&2
+        msg "$RED" "Error: region is required when linode_id is not provided" >&2
         return 1
     fi
 
     # config_id requires linode_id
     if [ -n "$config_id" ] && [ -z "$linode_id" ]; then
-        echo -e "${RED}Error: config_id requires linode_id${NC}" >&2
+        msg "$RED" "Error: config_id requires linode_id" >&2
         return 1
     fi
 
@@ -1545,7 +1343,7 @@ generate_ssh_key() {
 
     # Generate key pair (Ed25519, no passphrase)
     if ! ssh-keygen -t ed25519 -f "$key_path" -N "" -C "$comment" > /dev/null 2>&1; then
-        echo -e "${RED}❌ Failed to generate SSH key${NC}" >&2
+        msg "$RED" "❌ Failed to generate SSH key" >&2
         return 1
     fi
 
