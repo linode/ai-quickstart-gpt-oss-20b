@@ -16,7 +16,7 @@ log() {
     echo "$1" | tee -a "$LOG_FILE"
 }
 
-log "☁️  cloud-init package install finished. starting bootstrap.sh..."
+log "☁️ cloud-init package install finished. starting bootstrap.sh..."
 sleep 2
 
 # Install NVIDIA drivers (skip if already installed)
@@ -79,7 +79,7 @@ cp -r "${TEMP_DIR}/${PROJECT_NAME}-main/setup/"* "/opt/${PROJECT_NAME}/"
 rm -rf "${TEMP_DIR}"
 
 # Create systemd service for AI Quickstart Stack
-log "⚙️  Registering systemd service for ${PROJECT_NAME} stack ..."
+log "⚙️ Registering systemd service for ${PROJECT_NAME} stack ..."
 cat > /etc/systemd/system/${PROJECT_NAME}.service << EOF
 [Unit]
 Description=Start ${PROJECT_NAME} Stack
@@ -97,7 +97,7 @@ EOF
 
 # Create systemd service for setup.sh to run at boot
 if [ -f "/opt/${PROJECT_NAME}/setup.sh" ]; then
-    log "⚙️  Registering systemd service for ${PROJECT_NAME} setup ..."
+    log "⚙️ Registering systemd service for ${PROJECT_NAME} setup ..."
     cat > /etc/systemd/system/${PROJECT_NAME}-setup.service << EOF
 [Unit]
 Description=Setup ${PROJECT_NAME} Stack at boot
@@ -126,7 +126,7 @@ DOMAIN_NAME=ip.linodeusercontent.com
 EOF
 
 # Pull latest Docker images
-log "⬇️  Downloading container images... (this may take 2 - 3 min)..."
+log "⬇️ Downloading container images... (this may take 2 - 3 min)..."
 cd /opt/${PROJECT_NAME}
 docker compose pull --quiet || true
 
