@@ -1,5 +1,11 @@
-_PUBLIC_IP_LABEL_PLACEHOLDER_.ip.linodeusercontent.com {
-    reverse_proxy open-webui:8080
+{
+    admin localhost:2019
+}
+
+{$SUBDOMAIN}.{$DOMAIN_NAME} {
+    reverse_proxy open-webui:8080 {
+        flush_interval -1
+    }
     encode gzip
 
     log {
@@ -8,11 +14,8 @@ _PUBLIC_IP_LABEL_PLACEHOLDER_.ip.linodeusercontent.com {
     }
 
     header {
-        # Security headers
         Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        X-XSS-Protection "1; mode=block"
         Referrer-Policy "strict-origin-when-cross-origin"
     }
 }
