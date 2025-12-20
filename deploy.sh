@@ -18,9 +18,11 @@ readonly PROJECT_NAME="ai-quickstart-gpt-oss-20b"
 
 # Get directory of this script (empty if running via curl pipe)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}" 2>/dev/null)" 2>/dev/null && pwd 2>/dev/null || echo "")"
+ORIGINAL_SCRIPT_DIR="$SCRIPT_DIR"
 
-# Remote repository base URL (for downloading files when running remotely)
+# Remote repository base URLs (for downloading files when running remotely)
 REPO_RAW_BASE="https://raw.githubusercontent.com/linode/${PROJECT_NAME}/main"
+TOOLS_RAW_BASE="https://raw.githubusercontent.com/linode/ai-quickstart-gpt-oss-20b/main"
 
 # Temp directory for remote execution (will be cleaned up on exit)
 REMOTE_TEMP_DIR=""
@@ -28,33 +30,23 @@ REMOTE_TEMP_DIR=""
 #==============================================================================
 # Setup: Ensure required files exist (download if running remotely)
 #==============================================================================
+# _dl - Get file from local or download from remote
+# Usage: path=$(_dl <local_dir> <file_path> <repo_base_url> <temp_dir> [silent])
+# Returns: path to file (local or downloaded), empty if download fails
+_dl() {
+    local ld="$1" fp="$2" url="$3" td="$4"
+    [ -n "$ld" ] && [ -f "${ld}/${fp}" ] && { echo "${ld}/${fp}"; return; }
+    local dest="${td}/${fp}"; mkdir -p "$(dirname "$dest")"
+    echo "Downloading ${fp}..." >&2
+    curl -fsSL "${url}/${fp}" -o "$dest" 2>/dev/null && echo "$dest"
+}
+
 _setup_required_files() {
-    local files=("script/quickstart_tools.sh" "template/cloud-init.yaml" "template/docker-compose.yml" "template/install.sh" "template/Caddyfile")
-    local all_exist=true
-
-    # Check if all required files exist locally
-    [ -z "$SCRIPT_DIR" ] && all_exist=false
-    for f in "${files[@]}"; do [ ! -f "${SCRIPT_DIR}/$f" ] && all_exist=false; done
-
-    if [ "$all_exist" = true ]; then
-        TEMPLATE_DIR="${SCRIPT_DIR}/template"
-        QUICKSTART_TOOLS_PATH="${SCRIPT_DIR}/script/quickstart_tools.sh"
-    else
-        # Download required files to temp directory
-        echo "Downloading required files..."
-        REMOTE_TEMP_DIR="${TMPDIR:-/tmp}/${PROJECT_NAME}-$$"
-        mkdir -p "${REMOTE_TEMP_DIR}/template" "${REMOTE_TEMP_DIR}/script"
-
-        for f in "${files[@]}"; do
-            curl -fsSL "${REPO_RAW_BASE}/$f" -o "${REMOTE_TEMP_DIR}/$f" || { echo "ERROR: Failed to download $f" >&2; exit 1; }
-        done
-
-        SCRIPT_DIR="$REMOTE_TEMP_DIR"
-        TEMPLATE_DIR="${REMOTE_TEMP_DIR}/template"
-        QUICKSTART_TOOLS_PATH="${REMOTE_TEMP_DIR}/script/quickstart_tools.sh"
-        echo "Required files downloaded successfully."
-    fi
-
+    REMOTE_TEMP_DIR="${TMPDIR:-/tmp}/${PROJECT_NAME}-$$"
+    QUICKSTART_TOOLS_PATH=$(_dl "$SCRIPT_DIR" "script/quickstart_tools.sh" "$TOOLS_RAW_BASE" "$REMOTE_TEMP_DIR") || { echo "ERROR: Failed to get quickstart_tools.sh" >&2; exit 1; }
+    _dl "$SCRIPT_DIR" "template/cloud-init.yaml" "$REPO_RAW_BASE" "$REMOTE_TEMP_DIR" >/dev/null || { echo "ERROR: Failed to get cloud-init.yaml" >&2; exit 1; }
+    _dl "$SCRIPT_DIR" "template/bootstrap.sh" "$REPO_RAW_BASE" "$REMOTE_TEMP_DIR" >/dev/null || { echo "ERROR: Failed to get bootstrap.sh" >&2; exit 1; }
+    TEMPLATE_DIR="${SCRIPT_DIR}/template"; [ -d "$TEMPLATE_DIR" ] && [ -f "$TEMPLATE_DIR/cloud-init.yaml" ] || TEMPLATE_DIR="${REMOTE_TEMP_DIR}/template"
     export QUICKSTART_TOOLS_PATH TEMPLATE_DIR
 }
 
@@ -76,8 +68,9 @@ _setup_required_files
 # Source quickstart tools library
 source "$QUICKSTART_TOOLS_PATH"
 
-# Log file setup
-LOG_FILE="${SCRIPT_DIR}/deploy-$(date +%Y%m%d-%H%M%S).log"
+# Log file setup (use original script dir if available, otherwise current dir)
+LOG_DIR="${ORIGINAL_SCRIPT_DIR:-$(pwd)}"
+LOG_FILE="${LOG_DIR}/deploy-$(date +%Y%m%d-%H%M%S).log"
 
 # Colors and API_BASE are now exported by quickstart_tools.sh
 # RED, GREEN, YELLOW, BLUE, CYAN, NC, MAGENTA, BOLD, API_BASE
@@ -100,9 +93,9 @@ INSTANCE_ID=""
 # This extends error_exit with instance cleanup capability
 _error_exit_with_cleanup() {
     local message="$1"
-    local offer_delete="${2:-false}"
+    local offer_delete="${2:-true}"
 
-    print_msg "$RED" "❌ ERROR: $message"
+    msg "$RED" "❌ ERROR: $message"
     log_to_file "ERROR" "$message"
 
     # Offer to delete instance if requested and instance was created
@@ -114,7 +107,7 @@ _error_exit_with_cleanup() {
 
         if [[ "$delete_choice" =~ ^[Yy]$ ]]; then
             echo ""
-            print_msg "$YELLOW" "Deleting instance (ID: ${INSTANCE_ID})..."
+            msg "$YELLOW" "Deleting instance (ID: ${INSTANCE_ID})..."
 
             if delete_instance "$TOKEN" "$INSTANCE_ID" > /dev/null; then
                 success "Instance deleted successfully"
@@ -131,16 +124,79 @@ _error_exit_with_cleanup() {
     exit 1
 }
 
+# SSH helper function (must be called after SSH_OPTS and INSTANCE_IP are set)
+ssh_exec() { ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" "$@" </dev/null 2>/dev/null; }
+
+# Function to wait for instance to be running and SSH accessible
+wait_for_instance_ready() {
+    local timeout=${1:-180}
+    local START_TIME=$(date +%s)
+    local INSTANCE_STATUS=false
+
+    while [ $(($(date +%s) - START_TIME)) -lt $timeout ]; do
+        ELAPSED=$(($(date +%s) - START_TIME))
+        ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
+        STATUS=$(linode_api_call "/linode/instances/${INSTANCE_ID}" "$TOKEN" | jq -r '.status')
+
+        if [ "$STATUS" = "running" ]; then
+            INSTANCE_STATUS=running
+            ssh_exec exit && { INSTANCE_STATUS=ready; break; }
+            progress "$YELLOW" "Status: waiting SSH access - Elapsed: ${ELAPSED_STR}"
+        else
+            progress "$YELLOW" "Status: ${STATUS:-unknown} - Elapsed: ${ELAPSED_STR}"
+        fi
+        sleep 3
+    done
+
+    [ "$INSTANCE_STATUS" = false ] && _error_exit_with_cleanup "Instance failed to reach 'running' status"
+    [ "$INSTANCE_STATUS" != ready ] && _error_exit_with_cleanup "Instance failed to become SSH accessible"
+    log_to_file "INFO" "Instance running and SSH accessible in ${ELAPSED_STR}"
+    progress "$NC" "Instance is ready and accessible via SSH (took ${ELAPSED_STR})"
+    echo ""
+    echo ""
+}
+
+# Function to monitor remote log file and wait for completion
+monitor_remote_log() {
+    local log_path="$1" exit_pattern="$2" error_pattern="$3" timeout=${4:-300}
+    local START_TIME=$(date +%s) LAST_LINE=0
+
+    while [ $(($(date +%s) - START_TIME)) -lt $timeout ]; do
+        ssh_exec "[ -f ${log_path} ]" && break
+        ELAPSED=$(($(date +%s) - START_TIME))
+        ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
+        progress "$YELLOW" "Waiting... Elapsed: ${ELAPSED_STR}"
+        sleep 3
+    done
+    ssh_exec "[ -f ${log_path} ]" || _error_exit_with_cleanup "Waiting timeout after ${timeout}s"
+
+    while true; do
+        CONTENT=$(ssh_exec "tail -n +$((LAST_LINE + 1)) ${log_path} 2>/dev/null" || echo "")
+        if [ -n "$CONTENT" ]; then
+            progress "$CONTENT"; echo ""; scroll_up 8
+            LAST_LINE=$((LAST_LINE + $(echo "$CONTENT" | wc -l)))
+            echo "$CONTENT" | grep -qE "$error_pattern" && _error_exit_with_cleanup "$(echo "$CONTENT" | grep -E "$error_pattern")"
+            echo "$CONTENT" | grep -qE "$exit_pattern" && break
+            START_TIME=$(date +%s)
+        else
+            ELAPSED=$(($(date +%s) - START_TIME))
+            ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
+            [ $ELAPSED -ge 20 ] && progress "$YELLOW" "Waiting ... Elapsed: ${ELAPSED_STR}"
+        fi
+        sleep 3
+    done
+}
+
 #==============================================================================
 # Show Logo
 #==============================================================================
 show_banner
 
-print_msg "$CYAN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-print_msg "$BOLD" "           AI Quickstart gpt-oss-20b LLM"
-print_msg "$CYAN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+msg "$CYAN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+msg "$BOLD" "           AI Quickstart gpt-oss-20b LLM"
+msg "$CYAN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-print_msg "$YELLOW" "Deploys a GPU instance with vLLM, Open-WebUI, and gpt-oss-20b model (~10-15 min)"
+msg "$YELLOW" "Deploys a GPU instance with vLLM, Open-WebUI, and gpt-oss-20b model (~10-15 min)"
 echo ""
 
 # before proceeding, ensure jq is installed
@@ -179,7 +235,7 @@ if [ ${#REGION_LIST[@]} -eq 0 ]; then
     error_exit "No regions with available GPU instances found"
 fi
 
-print_msg "$GREEN" "Available Regions:"
+msg "$GREEN" "Available Regions:"
 
 # Use ask_selection for region choice
 ask_selection "Select a region" REGION_LIST "" region_choice
@@ -196,7 +252,7 @@ echo ""
 #==============================================================================
 show_step "💻 Step 4/10: Select Instance Type"
 
-print_msg "$GREEN" "Available Instance Types in $SELECTED_REGION:"
+msg "$GREEN" "Available Instance Types in $SELECTED_REGION:"
 
 # Get available instance types for selected region using quickstart_tools
 get_gpu_details "$GPU_DATA" "$available_instance_types" "g2-gpu-rtx4000a1-s" TYPE_DISPLAY TYPE_DATA default_type_index
@@ -221,7 +277,7 @@ echo ""
 show_step "🏷️  Step 5/10: Instance Label"
 
 INSTANCE_LABEL="${PROJECT_NAME}-$(date +%y%m%d%H%M)"
-print_msg "$GREEN" "Your Instance Label: $INSTANCE_LABEL"
+msg "$GREEN" "Your Instance Label: $INSTANCE_LABEL"
 echo ""
 
 scroll_up
@@ -236,7 +292,7 @@ echo ""
 # Let User Specify Root Password
 #==============================================================================
 show_step "🔐 Step 6/10: Root Password"
-print_msg "$GREEN" "A root password is required for secure access to the instance"
+msg "$GREEN" "A root password is required for secure access to the instance"
 echo ""
 
 ask_password INSTANCE_PASSWORD
@@ -246,7 +302,7 @@ echo ""
 # Let User Select SSH Public Key
 #==============================================================================
 show_step "🔑 Step 7/10: SSH Public Key (Required)"
-print_msg "$GREEN" "An SSH key is required for secure access to the instance"
+msg "$GREEN" "An SSH key is required for secure access to the instance"
 echo ""
 
 # Get SSH keys using quickstart_tools
@@ -286,23 +342,11 @@ echo ""
 # Create Cloud-Init with Base64 Encoded Files
 #==============================================================================
 
-# Base64 encode docker-compose.yml
-if [ ! -f "${TEMPLATE_DIR}/docker-compose.yml" ]; then
-    error_exit "template/docker-compose.yml not found"
+# Base64 encode bootstrap.sh
+if [ ! -f "${TEMPLATE_DIR}/bootstrap.sh" ]; then
+    error_exit "template/bootstrap.sh not found"
 fi
-DOCKER_COMPOSE_BASE64=$(base64 < "${TEMPLATE_DIR}/docker-compose.yml" | tr -d '\n')
-
-# Base64 encode Caddyfile
-if [ ! -f "${TEMPLATE_DIR}/Caddyfile" ]; then
-    error_exit "template/Caddyfile not found"
-fi
-CADDYFILE_BASE64=$(base64 < "${TEMPLATE_DIR}/Caddyfile" | tr -d '\n')
-
-# Base64 encode install.sh (need to add notify function)
-if [ ! -f "${TEMPLATE_DIR}/install.sh" ]; then
-    error_exit "template/install.sh not found"
-fi
-INSTALL_SH_BASE64=$(base64 < "${TEMPLATE_DIR}/install.sh" | tr -d '\n')
+BOOTSTRAP_SH_BASE64=$(base64 < "${TEMPLATE_DIR}/bootstrap.sh" | tr -d '\n')
 
 # Read cloud-init template
 if [ ! -f "${TEMPLATE_DIR}/cloud-init.yaml" ]; then
@@ -313,9 +357,7 @@ fi
 CLOUD_INIT_DATA=$(cat "${TEMPLATE_DIR}/cloud-init.yaml" | \
     sed "s|_PROJECT_NAME_PLACEHOLDER_|${PROJECT_NAME}|g" | \
     sed "s|_INSTANCE_LABEL_PLACEHOLDER_|${INSTANCE_LABEL}|g" | \
-    sed "s|_CADDYFILE_BASE64_CONTENT_PLACEHOLDER_|${CADDYFILE_BASE64}|g" | \
-    sed "s|_DOCKER_COMPOSE_BASE64_CONTENT_PLACEHOLDER_|${DOCKER_COMPOSE_BASE64}|g" | \
-    sed "s|_INSTALL_SH_BASE64_CONTENT_PLACEHOLDER_|${INSTALL_SH_BASE64}|g")
+    sed "s|_BOOTSTRAP_SH_BASE64_CONTENT_PLACEHOLDER_|${BOOTSTRAP_SH_BASE64}|g")
 
 #==============================================================================
 # Show Confirmation Prompt
@@ -387,195 +429,78 @@ echo ""
 show_step "⏳ Step 10: Monitoring Deployment ..."
 scroll_up 8
 
-#------------------------------------------------------------------------------
-# Phase 1: Wait for instance status to become "running" (max 3 minutes)
-#------------------------------------------------------------------------------
-print_msg "$YELLOW" "Waiting instance to boot up ... (this may take 2 - 3 minutes)"
-START_TIME=$(date +%s)
-TIMEOUT=180
-
-while true; do
-    ELAPSED=$(($(date +%s) - START_TIME))
-    ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
-
-    STATUS=$(linode_api_call "/linode/instances/${INSTANCE_ID}" "$TOKEN" | jq -r '.status')
-    [ "$STATUS" = "running" ] && break
-    [ $ELAPSED -ge $TIMEOUT ] && break
-    
-    progress "$YELLOW" "Status: ${STATUS:-unknown} - Elapsed: ${ELAPSED_STR}"
-    sleep 5
-done
-
-[ "$STATUS" != "running" ] && _error_exit_with_cleanup "Instance failed to reach 'running' status" true
-log_to_file "INFO" "Instance status reached 'running' in ${ELAPSED_STR}"
-progress "$NC" "Instance is now in running status (took ${ELAPSED_STR})"
-echo ""
-echo ""
+# Setup SSH helper function
+SSH_OPTS=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$SSH_KEY_FILE")
 
 #------------------------------------------------------------------------------
-# Phase 2: Waiting for cloud-init to finish package install (max 3 minutes)
+# Phase 1: Wait for instance status to become "running" and SSH accessible (max 3 minutes)
 #------------------------------------------------------------------------------
-print_msg "$YELLOW" "Waiting cloud-init to finish installing required packages ... (this may take 3 - 5 minutes)"
+msg "$YELLOW" "Waiting instance to boot up ... (this may take 1 - 2 minutes)"
 scroll_up 8
-START_TIME=$(date +%s)
+wait_for_instance_ready 180
 
-# Start ntfy.sh JSON stream monitor
-# Wait up to 180s for first message event, then continue until "Rebooting" or "Starting"
-# Use --no-buffer to disable buffering
-exec 3< <(curl -sN "https://ntfy.sh/${INSTANCE_LABEL}/json")
-
-# Wait for first message event with 300s timeout
-while IFS= read -t 300 -r line <&3; do
-    event=$(echo "$line" | jq -r '.event // empty')
-    [ "$event" = "message" ] && break
-done || {
-    exec 3<&-
-    _error_exit_with_cleanup "Timeout: No cloud-init progress for 300 seconds" true
-}
-
-# Process first message and continue until termination keyword found
-while true; do
-    message=$(echo "$line" | jq -r '.message // empty')
-    [ -n "$message" ] && {
-        echo "$message" >&2
-        echo "$message" | grep -qE "(Rebooting|Starting)" && break
-    }
-
-    IFS= read -r line <&3 || break
-    [ "$(echo "$line" | jq -r '.event // empty')" = "message" ] || continue
-done
-
-exec 3<&-
-ELAPSED=$(($(date +%s) - START_TIME))
-log_to_file "INFO" "Cloud-init package installation completed"
-echo -e "cloud-init process completed (took $([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s"))"
+#------------------------------------------------------------------------------
+# Phase 2: Monitor bootstrap.sh progress via log file
+#------------------------------------------------------------------------------
+msg "$YELLOW" "Waiting cloud-init to finish installing required packages ... (this may take 1 - 2 minutes)"
+scroll_up 8
+monitor_remote_log "/var/log/${PROJECT_NAME}-bootstrap.log" "(🔄 Rebooting to load NVIDIA drivers|🚀 Starting docker compose up)" "ERROR:" 300
+log_to_file "INFO" "Bootstrap installation completed in ${ELAPSED}s"
 echo ""
-
-# Wait 5 seconds for reboot to initiate
 sleep 5
 
 #------------------------------------------------------------------------------
 # Phase 3: Wait for Instance to reboot (max 2 minutes)
 #------------------------------------------------------------------------------
-print_msg "$YELLOW" "Waiting for Instance to reboot... (this may take 1 - 2 minutes)"
+msg "$YELLOW" "Waiting for Instance to reboot..."
 scroll_up 8
-START_TIME=$(date +%s)
-
-# Setup SSH command with options to suppress warnings
-SSH_OPTS=(-o ConnectTimeout=3 -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$SSH_KEY_FILE")
-
-while true; do
-    ELAPSED=$(($(date +%s) - START_TIME))
-    ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
-    progress "$YELLOW" "Status: booting ... Elapsed: ${ELAPSED_STR}"
-
-    [ $ELAPSED -ge 120 ] && _error_exit_with_cleanup "Instance failed to become accessible" true
-    ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" exit </dev/null 2>/dev/null && break
-    sleep 2
-done
-log_to_file "INFO" "Instance rebooted and SSH accessible in ${ELAPSED_STR}s"
-progress "$NC" "Instance is now running status. (took ${ELAPSED_STR})"
-echo ""
-echo ""
+wait_for_instance_ready 120
 
 #------------------------------------------------------------------------------
-# Phase 4: Verify Containers are Running
+# Phase 4: Monitor setup.sh progress via log file
 #------------------------------------------------------------------------------
-print_msg "$YELLOW" "Waiting for containers to start..."
-scroll_up 8
-
-CONTAINER_CHECK=$(ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" "docker ps --format '{{.Names}}'" </dev/null 2>/dev/null || echo "")
-
-if echo "$CONTAINER_CHECK" | grep -q "vllm" && echo "$CONTAINER_CHECK" | grep -q "open-webui" && echo "$CONTAINER_CHECK" | grep -q "caddy"; then
-    log_to_file "INFO" "Docker containers verified: vLLM, Open-WebUI, and Caddy running"
-    echo "All containers are running (vLLM, Open-WebUI, Caddy)"
-else
-    log_to_file "WARN" "Container check incomplete: $CONTAINER_CHECK"
-    warn "Some containers may still be starting. Check manually with: docker ps"
-fi
-echo ""
-
-print_msg "$YELLOW" "Waiting for Open-WebUI to be ready..."
+msg "$YELLOW" "Continue setup and LLM model download ..."
 scroll_up 8
 START_TIME=$(date +%s)
-
-while true; do
-    ELAPSED=$(($(date +%s) - START_TIME))
-    ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
-    progress "$YELLOW" "Status: starting ... Elapsed: ${ELAPSED_STR}"
-
-    if [ "$(ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health" </dev/null 2>/dev/null || echo "000")" = "200" ]; then
-        log_to_file "INFO" "Open-WebUI health check passed in ${ELAPSED}s"
-        progress "$NC" "Open-WebUI is ready (took ${ELAPSED_STR})"
-        break
-    fi
-    if [ $ELAPSED -ge 30 ]; then
-        log_to_file "WARN" "Open-WebUI health check timeout after ${ELAPSED_STR}"
-        warn "Timeout waiting for Open-WebUI health check. It may still be starting up."
-        break
-    fi
-    sleep 2
-done
-echo ""
-echo ""
-
-print_msg "$YELLOW" "Waiting for vLLM to download gpt-oss model... (this may take 3-5 minutes)"
-scroll_up 8
-START_TIME=$(date +%s)
-
-while true; do
-    ELAPSED=$(($(date +%s) - START_TIME))
-    ELAPSED_STR=$([ $ELAPSED -ge 60 ] && echo "$((ELAPSED / 60))m $((ELAPSED % 60))s" || echo "${ELAPSED}s")
-    progress "$YELLOW" "Status: downloading model ... Elapsed: ${ELAPSED_STR}"
-
-    if ssh "${SSH_OPTS[@]}" "root@${INSTANCE_IP}" "curl -s http://localhost:8000/v1/models" </dev/null 2>/dev/null | grep -q '"id":"openai/gpt-oss-20b"'; then
-        log_to_file "INFO" "vLLM model loaded successfully in ${ELAPSED_STR}"
-        progress "$NC" "vLLM model is loaded (took ${ELAPSED_STR})"
-        break
-    fi
-    if [ $ELAPSED -ge 600 ]; then
-        log_to_file "WARN" "vLLM model load timeout after ${ELAPSED_STR}"
-        warn "Timeout waiting for vLLM model to load. Model may still be downloading."
-        break
-    fi
-    sleep 2
-done
+monitor_remote_log "/var/log/${PROJECT_NAME}-setup.log" "Setup completed successfully!" "ERROR:" 900
+ELAPSED=$(($(date +%s) - START_TIME))
+log_to_file "INFO" "Setup completed in ${ELAPSED}s"
 echo ""
 echo ""
 
 #==============================================================================
 # Show Access URL
 #==============================================================================
-print_msg "$GREEN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-print_msg "$BOLD" " 🎉 Setup Completed !!"
-print_msg "$GREEN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+msg "$GREEN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+msg "$BOLD" " 🎉 Setup Completed !!"
+msg "$GREEN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-print_msg "$BOLD$GREEN" "✅ Your AI LLM instance is now ready !!"
+msg "$BOLD$GREEN" "✅ Your AI LLM instance is now ready !!"
 echo ""
-print_msg "$CYAN" "📊 Instance Details:"
+msg "$CYAN" "📊 Instance Details:"
 echo "   Instance ID:    $INSTANCE_ID"
 echo "   Instance Label: $INSTANCE_LABEL"
 echo "   IP Address:     $INSTANCE_IP"
 echo "   Region:         $SELECTED_REGION"
 echo "   Instance Type:  $SELECTED_TYPE"
 echo ""
-print_msg "$CYAN" "🔐 Access Credentials:"
+msg "$CYAN" "🔐 Access Credentials:"
 echo "   SSH:         ssh -i ${SSH_KEY_FILE} root@${INSTANCE_IP}"
 echo "   SSH Key:     ${SSH_KEY_FILE}"
 echo "   Password:    ${INSTANCE_PASSWORD}"
 echo ""
-print_msg "$CYAN" "📋 Execution Log:"
+msg "$CYAN" "📋 Execution Log:"
 echo "   Log file:       $LOG_FILE"
 echo ""
-print_msg "$GREEN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+msg "$GREEN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 INSTANCE_IP_LABEL=$(echo "$INSTANCE_IP" | tr . -)
-print_msg "$YELLOW" "💡 Next Steps:"
+msg "$YELLOW" "💡 Next Steps:"
 printf "   1. 🌐 Access Open-WebUI: ${CYAN}https://${INSTANCE_IP_LABEL}.ip.linodeusercontent.com${NC}\n"
 echo "   2. Create admin user account (your account data is stored only on your instance)"
 echo "   3. Start chatting with the model running on your GPU instance !!"
 echo ""
-print_msg "$YELLOW" "📁 Check AI Stack Configuration:"
+msg "$YELLOW" "📁 Check AI Stack Configuration:"
 printf "   Docker Compose: ${CYAN}/opt/${PROJECT_NAME}/docker-compose.yml${NC}\n"
 echo "   Services: Caddy (port 80/443) + vLLM (port 8000) + Open-WebUI (port 8080)"
 echo ""
