@@ -585,3 +585,4 @@ echo ""
 echo ""
 log_to_file "INFO" "Deployment completed successfully"
 log_to_file "INFO" "Instance URL: https://${INSTANCE_IP_LABEL}.ip.linodeusercontent.com"
+deployment_complete "${PROJECT_NAME}" "${SELECTED_REGION}" "${SELECTED_TYPE}" 2>/dev/null || true

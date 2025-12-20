@@ -240,6 +240,11 @@ curl http://localhost:8080/health
 docker logs vllm
 ```
 
+-----------------------------------------
+## 📊 Privacy & Data Collection
+
+Successful deployments register anonymous statistics (project name, region, instance type) to help improve the service. To opt out, remove the `deployment_complete` call from `deploy.sh`.
+
 ## 🤝 Contributing
 
 Issues and pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
